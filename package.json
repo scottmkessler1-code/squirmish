@@ -4,7 +4,15 @@
   "private": true,
   "description": "Caterpillar Continental Combat, online multiplayer",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "start": "node server/index.js",
+    "check:browser": "NODE_PATH=$(npm root -g) node test/browser.check.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "ws": "^8.22.0"
+  }
 }

@@ -2,11 +2,12 @@
 // with full rendering produces exactly the Node trace, so drawing, particles and sound never touch the simulation.
 // Run: node test/browser.check.js
 const {chromium}=require('playwright'),path=require('path'),assert=require('assert/strict');
-const {record}=require('./harness');
+const {record}=require('./harness'),{createServer}=require('../server');
 (async()=>{
+  const srv=createServer();await new Promise(r=>srv.server.listen(0,r));
   const b=await chromium.launch(),page=await b.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>m.type()==='error'&&errors.push(m.text()));
-  await page.goto('file://'+path.resolve(__dirname,'../public/squirmish.html')+'#debug');
+  await page.goto('http://localhost:'+srv.server.address().port+'/r/ABCDE#debug');
   // the hot-seat UI still works: start a 3-player game, walk, fire a rocket
   await page.click('.n[data-n="3"]');await page.click('#go');
   await page.waitForTimeout(2500);
@@ -29,5 +30,5 @@ const {record}=require('./harness');
   }
   assert.deepEqual(errors,[],'page errors');
   console.log('no page errors; screenshot at browser-check.png');
-  await b.close();
+  await b.close();await srv.close();
 })().catch(e=>{console.error(e);process.exit(1)});
