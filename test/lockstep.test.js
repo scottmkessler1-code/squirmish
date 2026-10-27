@@ -62,6 +62,65 @@ test('clock: stalls for a lagging player, resumes when they catch up, gives up a
   run(200);f.r.disconnect(b,f.t);run(2000,true,false);assert.equal(c.stalled,null);
 });
 
+// ---------- desync detection and resync, fake time ----------
+const {HASH_WAIT_MS,SNAPSHOT_WAIT_MS,CHECKPOINT_EVERY}=require('../server/rooms');
+const sent=(f,id,t)=>f.inbox.get(id).filter(m=>m.t===t);
+function hashes(f,frame,list){list.forEach(([m,h,e])=>f.r.hash(m,{frame,h,e},f.t))}
+
+test('resync: the majority wins, the odd one out gets a snapshot from an agreeing client plus the inputs after it',()=>{
+  const f=started(3),[a,b,c]=f.ps;
+  f.advance(3000);f.r.input(a,{k:'ArrowLeft',d:true});f.advance(500);f.r.input(a,{k:'ArrowLeft',d:false});f.advance(1000);
+  hashes(f,120,[[a,111],[b,222],[c,111]]);f.advance(50);
+  assert.deepEqual(sent(f,b.id,'desync').map(m=>m.frame),[120]);
+  assert.equal(sent(f,a.id,'snapshot_req').length,1,'host is on the good side, so it provides');
+  assert.equal(sent(f,c.id,'snapshot_req').length,0);
+  assert.equal(f.r.snapshot(c,{data:{frame:10}}),'unexpected','only the chosen provider may answer');
+  const log=f.r.match.clock.log,snapF=log[0].f; // a snapshot taken between the two inputs
+  f.r.snapshot(a,{data:{frame:snapF,v:1}});
+  const sn=sent(f,b.id,'snapshot');
+  assert.equal(sn.length,1);assert.equal(sn[0].e,1);assert.equal(sn[0].upTo,f.r.match.clock.sentUpTo);
+  assert.deepEqual(sn[0].inputs,log.filter(e=>e.f>snapF&&e.f<=f.r.match.clock.sentUpTo));
+  assert.equal(sent(f,c.id,'snapshot').length,0,'in-sync clients are left alone');
+  // b's hashes from before it loaded the snapshot (epoch 0) are ignored; fresh ones are compared to what was agreed
+  f.r.hash(b,{frame:120,h:999,e:0},f.t);f.advance(50);assert.equal(sent(f,b.id,'desync').length,1);
+  f.r.hash(b,{frame:120,h:111,e:1},f.t);f.advance(50);assert.equal(sent(f,b.id,'desync').length,1);
+  f.r.hash(b,{frame:120,h:5,e:1},f.t);f.advance(50);assert.equal(sent(f,b.id,'desync').length,2,'late report checked against the agreed hash');
+  // a newcomer starts from the checkpoint, with only the inputs after it
+  const box=[];f.r.join({name:'Late',spectate:true},m=>box.push(m),f.t);
+  const w=box.find(m=>m.t==='welcome');
+  assert.equal(w.match.snapshot.frame,snapF);assert.ok(w.match.inputs.every(e=>e.f>snapF));
+});
+
+test('resync: a 1-1 tie goes to the host; reports wait for everyone, but not forever',()=>{
+  const f=started(2),[a,b]=f.ps;f.advance(3000);
+  hashes(f,120,[[b,2]]);f.advance(HASH_WAIT_MS-100);
+  assert.equal(sent(f,b.id,'desync').length+sent(f,a.id,'desync').length,0,'decided before everyone reported');
+  hashes(f,120,[[a,1]]);f.advance(50);
+  assert.equal(sent(f,b.id,'desync').length,1);assert.equal(sent(f,a.id,'snapshot_req').length,1);
+  // a frame only one client reported is accepted after the wait
+  hashes(f,240,[[a,7]]);f.advance(HASH_WAIT_MS+50);assert.equal(f.r.match.sync.agreed.get(240),7);
+});
+
+test('resync: a provider that never answers is replaced; client-requested resyncs are rate limited',()=>{
+  const f=started(3),[a,b,c]=f.ps;f.advance(3000);
+  hashes(f,120,[[a,1],[b,1],[c,9]]);f.advance(50);
+  assert.equal(sent(f,a.id,'snapshot_req').length,1);
+  f.r.disconnect(a,f.t);f.advance(SNAPSHOT_WAIT_MS+50);
+  assert.equal(sent(f,b.id,'snapshot_req').length,1,'next agreeing client asked');
+  f.r.snapshot(b,{data:{frame:10}});assert.equal(sent(f,c.id,'snapshot').length,1);
+  f.r.requestResync(c,f.t);f.r.requestResync(c,f.t+10);f.advance(50);
+  assert.equal(sent(f,b.id,'snapshot_req').length,2,'second request within the limit ignored');
+});
+
+test('resync: when everyone agrees, a checkpoint is still taken every couple of minutes',()=>{
+  const f=started(2),[a,b]=f.ps;f.advance(1000);
+  hashes(f,120,[[a,1],[b,1]]);f.advance(50);assert.equal(sent(f,a.id,'snapshot_req').length,0);
+  hashes(f,CHECKPOINT_EVERY,[[a,1],[b,1]]);f.advance(50);
+  assert.equal(sent(f,a.id,'snapshot_req').length,1);
+  f.r.snapshot(a,{data:{frame:5}});assert.equal(f.r.match.sync.checkpoint.frame,5);
+  assert.equal(sent(f,b.id,'snapshot').length,0);
+});
+
 // ---------- whole matches over real sockets ----------
 const FPS=1200; // 20x real time so a full match takes seconds
 // in-order delivery after a random delay, like a TCP stream with jitter (plain setTimeouts would reorder messages)
@@ -117,7 +176,7 @@ test('a full online match stays in sync through latency, a hidden tab, a reconne
   const base='http://localhost:'+srv.server.address().port,url=base.replace('http','ws')+'/ws';
   const code=(await (await fetch(base+'/api/rooms',{method:'POST'})).json()).code;
   const [a,b,c]=[netClient(url,{lat:[5,40],name:'a'}),netClient(url,{lat:[30,120],name:'b'}),netClient(url,{lat:[10,80],name:'c'})],v=netClient(url,{name:'v'});
-  const all=[a,b,c,v];let log=null,mo=null,last=0;
+  const all=[a,b,c,v];let log=null,mo=null,last=0,corruptAt=0,fixedAt=0;
   try{
   a.join(code,'Ann');await until(()=>a.you,2000,'a joined');
   b.join(code,'Bo');c.join(code,'Cy');await until(()=>b.you&&c.you,2000,'b,c joined');
@@ -144,6 +203,16 @@ test('a full online match stays in sync through latency, a hidden tab, a reconne
   await until(()=>a.game.frame>2400,30000,'frame 2400');
   c.rejoin(code);
   await until(()=>c.ws.readyState===1&&c.ls.started&&c.ls.behind<FPS,5000,'c caught up');
+  // c's state gets corrupted (as if a browser computed something differently): hashes catch it and c is resynced
+  await until(()=>c.game.frame>3000&&c.ls.started,30000,'frame 3000');
+  const alive=c.game.worms.find(w=>!w.dead);alive.hp-=13;corruptAt=c.game.frame;
+  await until(()=>c.ls.resyncs>=1,10000,'c resynced');
+  fixedAt=c.msgs.find(m=>m.t==='snapshot').data.frame;
+  assert.ok(c.desyncs.some(d=>d.reason==='hash_mismatch'));
+  // someone joining now starts from that checkpoint instead of frame 0
+  const v2=netClient(url,{name:'v2'});all.push(v2);v2.join(code,'Viewer2',{spectate:true});
+  await until(()=>v2.ls.started&&v2.ls.behind<FPS,5000,'v2 caught up');
+  assert.ok(v2.msgs.find(m=>m.t==='welcome').match.snapshot,'late joiner got the checkpoint');
   // play it out
   // bots can run out of ammo and stall into very long endgames; past a cap we still check sync, just not the lobby return
   await until(()=>all.every(x=>x.msgs.some(m=>m.t==='match_over'))||a.game.frame>=40000,90000,'match over');
@@ -152,12 +221,12 @@ test('a full online match stays in sync through latency, a hidden tab, a reconne
   if(mo)await until(()=>all.every(x=>x.msgs.some(m=>m.t==='lobby'&&m.state==='lobby'&&x.msgs.indexOf(m)>x.msgs.indexOf(x.msgs.find(q=>q.t==='match_over')))),10000,'back to lobby');
   }finally{all.forEach(x=>x.stop());await srv.close()}
 
-  for(const x of all)assert.deepEqual(x.desyncs,[],'client '+x.name+' received inputs for frames it had already run');
+  for(const x of all)assert.deepEqual(x.desyncs.filter(d=>d.reason!=='hash_mismatch'||x!==c),[],'unexpected desync on client '+x.name);
   // every client agrees on every frame they both saw, and the late joiner and reconnector saw it from frame 0
   const ref=a.trace;last=Math.max(...ref.keys());
-  for(const x of [b,c,v]){
-    let n=0;for(const [f,h] of x.trace)if(ref.has(f)){if(h!==ref.get(f))assert.fail(`client ${x.name} (connection ${x.conn}) desync at frame ${f}: ${h} vs a ${ref.get(f)}, offline replay ${replay(log.seed,log.names,log.inputs,f).trace.at(-1)}`);n++}
-    assert.ok(n>=last/60-2,'too few common samples: '+n);
+  for(const x of [b,c,v,all[4]]){
+    let n=0;for(const [f,h] of x.trace)if(ref.has(f)&&!(x===c&&f>=corruptAt&&f<=fixedAt)){if(h!==ref.get(f))assert.fail(`client ${x.name} (connection ${x.conn}) desync at frame ${f}: ${h} vs a ${ref.get(f)}, offline replay ${replay(log.seed,log.names,log.inputs,f).trace.at(-1)}`);n++}
+    assert.ok(n>=(x===all[4]?(last-x.msgs.find(m=>m.t==='welcome').match.snapshot.frame):last-(corruptAt<last?fixedAt-corruptAt:0))/60-4,'too few common samples for '+x.name+': '+n);
   }
   // and the online match is exactly the offline replay of the server's input log
   const off=replay(log.seed,log.names,log.inputs,last);

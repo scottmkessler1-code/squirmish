@@ -142,6 +142,46 @@ function paintTerrain(hs,caves,R){
 // terrain for the menu backdrop
 function preview(seed){setSeed(seed);genTerrain()}
 
+// ---- snapshots: the complete simulation state as plain JSON, for resyncing a client that diverged ----
+// JSON turns -0 into 0, so it travels as the string '-0' (it can matter: x*-0 and x*0 differ in sign)
+const nz=v=>Object.is(v,-0)?'-0':v,un=v=>v==='-0'?-0:v;
+const pick=(o,ks)=>{const r={};for(const k of ks)if(o[k]!==undefined)r[k]=nz(o[k]);return r};
+const unpick=o=>{const r={};for(const k in o)r[k]=un(o[k]);return r};
+const WORM_KEYS=['x','y','vx','vy','hp','dir','air','dead'],PROJ_KEYS=['x','y','vx','vy','t','age','fuse','hit','dead'],CRATE_KEYS=['x','y','landed','gone'];
+// terrain as run lengths of alternating empty/solid cells, starting with empty
+function encodeMask(){const r=[];let v=0,n=0;for(let i=0;i<mask.length;i++){if(mask[i]!==v){r.push(n);v=mask[i];n=0}n++}r.push(n);return r}
+function decodeMask(r){let i=0,v=0;for(const n of r){mask.fill(v,i,i+n);i+=n;v^=1}if(i!==mask.length)throw new Error('bad terrain size');tdirty=true}
+function getSnapshot(){
+  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,
+    winner:winner?teams.indexOf(winner):-1,keys:GAMEKEYS.filter(k=>keys[k]),
+    teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo]})),
+    worms:worms.map(w=>({...pick(w,WORM_KEYS),team:teams.indexOf(w.team)})),
+    projs:projs.map(p=>pick(p,PROJ_KEYS)),
+    crates:crates.map(c=>({...pick(c,CRATE_KEYS),items:c.items.map(x=>[...x])})),
+    mask:encodeMask()};
+}
+// Replaces the whole simulation state. Queued inputs are dropped: the caller re-submits those after s.frame.
+function loadSnapshot(s){
+  if(!s||s.v!==1)throw new Error('unknown snapshot version');
+  setSeed(s.seed);genTerrain(); // rebuilds the untouched landscape picture for this seed
+  const pristine=tg?mask.slice():null;
+  decodeMask(s.mask);
+  if(tg){ // erase every crater from the picture: cells that were solid at the start and aren't any more
+    const img=tg.getImageData(0,0,W,H),d=img.data;
+    for(let i=0;i<mask.length;i++)if(pristine[i]&&!mask[i])d[i*4+3]=0;
+    tg.putImageData(img,0,0);
+  }
+  teams=s.teams.map((t,i)=>({name:t.name,color:COLORS[i],worms:[],turns:t.turns,act:null,ammo:[...t.ammo]}));
+  worms=s.worms.map(o=>{const w={...unpick(o),team:teams[o.team]};w.team.worms.push(w);return w});
+  s.teams.forEach((t,i)=>teams[i].act=t.act>=0?worms[t.act]:null);
+  projs=s.projs.map(unpick);
+  crates=s.crates.map(o=>({...unpick(o),items:o.items.map(x=>[...x])}));
+  frame=s.frame;tick=s.tick;rs=s.rs;cur=s.cur;phase=s.phase;timer=s.timer;wind=un(s.wind);weapon=s.weapon;power=un(s.power);
+  charging=s.charging;aim=un(s.aim);settle=s.settle;waitT=s.waitT;winner=s.winner>=0?teams[s.winner]:null;
+  for(const k in keys)keys[k]=false;for(const k of s.keys)keys[k]=true;
+  inputQ.length=0;parts=[];rings=[];shake=0;toastT=0;
+}
+
 function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k in keys)keys[k]=false;
   genTerrain();teams=[];worms=[];projs=[];parts=[];crates=[];cur=-1;winner=null;wind=(rng()<.5?-1:1)*(.15+rng()*.85);
   weapon=1;aim=.5;power=0;charging=false;
@@ -345,10 +385,10 @@ function hud(a){g.shadowColor='rgba(0,0,0,.6)';g.shadowBlur=3;
   }
 }
 
-return {startGame,update,stateHash,submitInput,sendInput,applyInput,preview,draw,active,
+return {startGame,update,stateHash,submitInput,sendInput,applyInput,preview,draw,active,getSnapshot,loadSnapshot,
   get frame(){return frame},get tick(){return tick},get phase(){return phase},get cur(){return cur},get teams(){return teams},
   get worms(){return worms},get weapon(){return weapon},get winner(){return winner},get seed(){return curSeed},get terrainHash(){return terrainHash()},
-  set overHint(v){overHint=v}};
+  set overHint(v){overHint=v},get terrainCanvas(){return tc}};
 }
 
 const api={createGame,W,H,COLORS,WEAPONS,GAMEKEYS,ORDER,dsin,dcos,datan2,dhypot};

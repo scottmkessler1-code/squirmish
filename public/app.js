@@ -331,6 +331,7 @@ function updateBanner(){
   if(mode!=='match'){banner.hidden=true;return}
   let t='';
   if(net.status!=='online')t='Connection lost, reconnecting…';
+  else if(ls.resyncing)t='Out of sync, re-syncing…';
   else if(ls.behind>120)t='Catching up…';
   else if(net.over)t=`${net.over.name?net.over.name+' wins!':'Draw!'} Back to the lobby in ${Math.max(1,Math.ceil((net.over.backInMs-(performance.now()-net.over.at))/1000))} s`;
   else if(ls.waiting.length)t='Waiting for '+ls.waiting.map(id=>nameOf(id)||'a player').join(', ')+'…';

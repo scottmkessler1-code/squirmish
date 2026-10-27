@@ -15,6 +15,11 @@ const INPUT_DELAY=6;                // inputs are stamped this many frames after
 // RTT + the client ack interval (200 ms) + the step interval even when all is well, so these leave room for a ~400 ms ping.
 const STALL_LAG_S=1.5,RESUME_LAG_S=0.75;
 const STALL_MAX_MS=8_000;           // after this long, stop waiting for the laggards (they catch up on their own)
+// desync detection
+const HASH_EVERY=120;               // clients report stateHash() on frames divisible by this
+const HASH_WAIT_MS=3_000;           // compare a frame's hashes once everyone reported, or after this long
+const SNAPSHOT_WAIT_MS=5_000;       // a snapshot provider that doesn't answer in time is replaced
+const CHECKPOINT_EVERY=7_200;       // frames between checkpoint snapshots kept for late joiners (2 min)
 
 const randomCode=()=>Array.from({length:CODE_LEN},()=>CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)]).join('');
 const isCode=c=>typeof c==='string'&&c.length===CODE_LEN&&[...c].every(ch=>CODE_ALPHABET.includes(ch));
@@ -72,7 +77,9 @@ class Room{
     const welcome={t:'welcome',you:this.you(m),token:m.token,...this.view(),code:this.code,
       seatWanted:!spectate&&m.role==='spectator'}; // asked to play but the room was full or mid-match
     if(this.match){const c=this.match.clock; // late joiners fast-forward from frame 0 using the full input log
-      welcome.match={seed:this.match.seed,names:this.match.names,startFrame:0,inputs:c.log.filter(e=>e.f<=c.sentUpTo),upTo:c.sentUpTo,done:!!this.match.done}}
+      const cp=this.match.sync.checkpoint,from=cp?cp.frame:0; // start from the latest checkpoint when there is one
+      welcome.match={seed:this.match.seed,names:this.match.names,startFrame:0,snapshot:cp?cp.data:undefined,
+        inputs:c.log.filter(e=>e.f>from&&e.f<=c.sentUpTo),upTo:c.sentUpTo,done:!!this.match.done,e:this.match.sync.epoch.get(m.id)||0}}
     m.send(welcome);
     this.broadcastLobby();
     return {member:m};
@@ -119,7 +126,9 @@ class Room{
     this.pack();
     this.state='playing';
     this.match={seed,names:ps.map(p=>p.name),teamOf:new Map(ps.map(p=>[p.id,p.slot])),left:new Set(),over:new Map(),startedAt:now,
-      clock:{frame:0,acc:0,last:now,sentUpTo:0,pending:[],log:[],acks:new Map(),synced:new Set(),stalled:null,stallSince:0}};
+      clock:{frame:0,acc:0,last:now,sentUpTo:0,pending:[],log:[],acks:new Map(),synced:new Set(),stalled:null,stallSince:0},
+      // reports: frame -> {at, hs: id -> hash}; agreed: frame -> hash; epoch: id -> snapshots sent to that member
+      sync:{reports:new Map(),agreed:new Map(),epoch:new Map(),resync:null,checkpoint:null,resyncs:0}};
     for(const x of this.list)if(x.connected)x.send({t:'start',seed,names:this.match.names,startFrame:0,you:this.you(x)});
     this.broadcastLobby();
   }
@@ -165,6 +174,7 @@ class Room{
   }
   tickClock(now){
     if(this.returnAt&&now>=this.returnAt)return this.backToLobby();
+    if(this.match)this.tickSync(now);
     const mt=this.match;
     if(this.state!=='playing'||!mt||mt.done)return;
     const c=mt.clock,dt=Math.min(250,now-c.last);c.last=now;
@@ -183,6 +193,72 @@ class Room{
     if(upTo>c.sentUpTo){
       const inputs=c.pending.filter(e=>e.f<=upTo);c.pending=c.pending.filter(e=>e.f>upTo);c.sentUpTo=upTo;
       this.broadcast({t:'step',upTo,inputs});
+    }
+  }
+
+  // ---- desync detection and recovery
+  // Clients report stateHash() every HASH_EVERY frames. When a frame's reports disagree, the majority wins (ties go to the
+  // host's side). Each client that disagrees gets a snapshot from a client that agrees, plus every input logged after
+  // the snapshot's frame. Only the diverged clients jump; everyone else keeps playing.
+  hash(m,{frame,h,e},now){
+    const sy=this.match?.sync;
+    if(!sy||!Number.isInteger(frame)||frame<=0||frame%HASH_EVERY||!Number.isInteger(h))return;
+    if((e|0)<(sy.epoch.get(m.id)||0))return; // computed before this client loaded its last snapshot
+    if(sy.agreed.has(frame)){if(sy.agreed.get(frame)!==h)this.startResync([m.id],null,frame,now);return}
+    let r=sy.reports.get(frame);
+    if(!r){r={at:now,hs:new Map()};sy.reports.set(frame,r)}
+    r.hs.set(m.id,h);
+  }
+  tickSync(now){
+    const sy=this.match.sync,ids=this.connected.map(m=>m.id);
+    for(const [frame,r] of sy.reports){
+      if(!ids.every(id=>r.hs.has(id))&&now-r.at<HASH_WAIT_MS)continue; // wait for everyone, but not for long
+      sy.reports.delete(frame);
+      const groups=new Map();for(const [id,h] of r.hs){if(!groups.has(h))groups.set(h,[]);groups.get(h).push(id)}
+      const ranked=[...groups].sort((a,b)=>b[1].length-a[1].length||(b[1].includes(this.hostId)-a[1].includes(this.hostId)));
+      const [good,goodIds]=ranked[0];
+      sy.agreed.set(frame,good);
+      const bad=ranked.slice(1).flatMap(g=>g[1]);
+      if(bad.length)this.startResync(bad,goodIds,frame,now);
+      else if(!sy.resync&&frame-(sy.checkpoint?.frame||0)>=CHECKPOINT_EVERY)this.startResync([],goodIds,frame,now); // checkpoint only
+    }
+    for(const f of sy.agreed.keys())if(sy.agreed.size>64)sy.agreed.delete(f);else break;
+    const rs=sy.resync;
+    if(rs&&now-rs.at>=SNAPSHOT_WAIT_MS){ // provider gone quiet: ask someone else from the good side
+      const next=this.pickProvider(rs.candidates.filter(id=>!rs.tried.has(id)));
+      if(next){rs.provider=next;rs.tried.add(next);rs.at=now;this.byId(next).send({t:'snapshot_req'})}
+      else sy.resync=null; // nobody left to ask; the next hash round tries again
+    }
+  }
+  pickProvider(ids){
+    const ok=ids.map(id=>this.byId(id)).filter(m=>m&&m.connected);
+    return (ok.find(m=>m.id===this.hostId)||ok.find(m=>m.role==='player')||ok[0])?.id;
+  }
+  startResync(bad,goodIds,frame,now){
+    const sy=this.match.sync;
+    for(const id of bad)this.byId(id)?.send({t:'desync',frame});
+    if(sy.resync){for(const id of bad)sy.resync.targets.add(id);return}
+    const candidates=(goodIds||this.connected.map(m=>m.id)).filter(id=>!bad.includes(id));
+    const provider=this.pickProvider(candidates);
+    if(!provider)return;
+    sy.resync={provider,candidates,tried:new Set([provider]),targets:new Set(bad),at:now};
+    this.byId(provider).send({t:'snapshot_req'});
+  }
+  // a client asks for a resync itself (it noticed it can't be right, e.g. an input arrived for a frame it already ran)
+  requestResync(m,now){
+    if(!this.match||this.state!=='playing'||now-(m.lastResync||-Infinity)<SNAPSHOT_WAIT_MS)return; // one at a time per client
+    m.lastResync=now;this.startResync([m.id],null,0,now);
+  }
+  snapshot(m,{data}){
+    const mt=this.match,sy=mt?.sync,rs=sy?.resync;
+    if(!rs||rs.provider!==m.id)return 'unexpected';
+    if(!data||typeof data!=='object'||!Number.isInteger(data.frame)||data.frame<0||data.frame>mt.clock.sentUpTo)return 'bad_message';
+    sy.resync=null;sy.checkpoint={frame:data.frame,data};
+    const c=mt.clock,inputs=c.log.filter(e=>e.f>data.frame&&e.f<=c.sentUpTo);
+    for(const id of rs.targets){
+      const t=this.byId(id);if(!t||!t.connected)continue;
+      const e=(sy.epoch.get(id)||0)+1;sy.epoch.set(id,e);sy.resyncs++;
+      t.send({t:'snapshot',data,inputs,upTo:c.sentUpTo,e});
     }
   }
 
@@ -210,4 +286,4 @@ class Rooms{
 }
 
 module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS,
-  FPS,INPUT_DELAY,STALL_LAG_S,RESUME_LAG_S,STALL_MAX_MS};
+  FPS,INPUT_DELAY,STALL_LAG_S,RESUME_LAG_S,STALL_MAX_MS,HASH_EVERY,HASH_WAIT_MS,SNAPSHOT_WAIT_MS,CHECKPOINT_EVERY};

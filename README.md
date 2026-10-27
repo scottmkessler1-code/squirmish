@@ -27,15 +27,18 @@ Client → server
 | `input {k, d}` | seated players during a match; the server stamps `f` and `p` |
 | `ack {frame}` | the frame the client has simulated to, at most every 200 ms |
 | `ping {c}` | answered with `pong {c}` |
-| `hash`, `snapshot` | step 5 |
+| `hash {frame, h, e}` | every 120 frames; `e` = snapshots loaded so far |
+| `snapshot {data}` | only from the client the server asked (`snapshot_req`) |
+| `resync {}` | the client knows it diverged (at most once per 5 s) |
 
 Server → client: `welcome {you, token, code, state, host, players, spectators, seatWanted, match?}`,
 `lobby {state, host, players:[{id, slot, name, ready, connected}], spectators:[{id, name, connected}]}`,
 `you {you}`, `start {seed, names, startFrame, you}`, `host {id, slot}`, `player_left {slot, id}`,
 `match_over {winner, name, backInMs}`, `replaced`, `error {code}`, `pong {c}`,
-`step {upTo, inputs:[{f, p, k, d}]}`, `stall {waiting:[id]}` (empty list = running again).
-During a match, `welcome.match = {seed, names, startFrame, inputs, upTo, done}`: the full input log, so a late joiner or
-reconnecting player rebuilds the match by fast-forwarding from frame 0.
+`step {upTo, inputs:[{f, p, k, d}]}`, `stall {waiting:[id]}` (empty list = running again),
+`desync {frame}`, `snapshot_req {}`, `snapshot {data, inputs, upTo, e}`.
+During a match, `welcome.match = {seed, names, startFrame, snapshot?, inputs, upTo, done, e}`: the latest checkpoint
+snapshot (if any) and every input after it, so a late joiner or reconnecting player fast-forwards from there.
 
 `you = {id, name, role: 'player'|'spectator', slot, team}`. Spectators have `slot`/`team` −1. `host` is a member `id`
 (spectators can be host). Slots stay packed 0..n−1 in the lobby, so slot = team index = colour.
@@ -54,3 +57,14 @@ If a connected, caught-up player's `ack` falls more than 1.5 s behind, the clock
 - Inputs are sent only while it is your team's turn; the weapon bar shows your own team's ammo and is dimmed otherwise.
 - The reconnect token is kept in `localStorage` per room, so a reload or a dropped connection rejoins the same seat.
 - Add `#debug` to the URL for the seed/frame/hash readout and `window.__sq` (game, lockstep, net).
+
+## Desync detection and recovery
+Clients report `stateHash()` every 120 frames. The server compares a frame once everyone connected has reported it (or
+after 3 s). The majority hash wins; on a tie, the host's side. Each client that disagrees gets `desync`, and a client on
+the good side (host first) is asked for a snapshot; the diverged clients load it plus every logged input after its frame.
+In-sync clients are not paused. A provider that doesn't answer within 5 s is replaced. The latest snapshot is kept as a
+checkpoint for late joiners, and one is also taken every 2 minutes while everyone agrees.
+
+Snapshots (`game.getSnapshot()` / `loadSnapshot()`) hold the full simulation state as JSON, about 5–10 KB: worms, teams
+and ammo, projectiles, crates, turn state, RNG state, held keys, and the terrain as run lengths. Loading rebuilds the
+landscape picture from the seed and erases the craters.

@@ -72,6 +72,9 @@ function createServer({now=Date.now,maxRooms,fps,createPerMin=CREATE_PER_MIN}={}
         case 'start':err=room.start(me,t);break;
         case 'input':err=room.input(me,msg);break;
         case 'ack':room.ack(me,msg.frame);break;
+        case 'hash':room.hash(me,msg,t);break;
+        case 'snapshot':err=room.snapshot(me,msg);break;
+        case 'resync':room.requestResync(me,t);break;
         case 'over':err=room.reportOver(me,msg,t);break;
         case 'leave':room.leave(me,t);me=null;room=null;ws.close(1000,'left');break;
         default:err='unknown_type';

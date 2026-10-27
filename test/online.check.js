@@ -77,6 +77,16 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     assert.match(await B.textContent('#me'),/team 2, Bo/);
     await B.waitForFunction(()=>__sq.ls.started&&__sq.ls.behind<10);await record(B);
     await sleep(3000);await compare([A,B,C],'after reload');
+    // B's state is corrupted (as if its browser computed something differently): hashes catch it, B loads A's snapshot
+    await B.evaluate(()=>{const w=__sq.game.worms.find(w=>!w.dead);w.hp-=13;w.x+=5});
+    await B.waitForFunction(()=>__sq.ls.resyncs>=1,null,{timeout:10000});
+    await record(B);await sleep(3000);await compare([A,B,C],'after resync');
+    await shot(B,'5-after-resync');await shot(A,'5-host-same-moment');
+    // a reload now starts from the server's checkpoint snapshot, terrain picture included
+    await B.reload();await B.waitForSelector('#me:not([hidden])');
+    await B.waitForFunction(()=>__sq.ls.started&&__sq.ls.behind<10);await record(B);
+    await sleep(3000);await compare([A,B,C],'after reload from checkpoint');
+    await shot(B,'6-reloaded-from-checkpoint');
     // the spectator leaves: back to the home screen, gone from the room
     await C.click('#leave');await C.waitForSelector('[data-act=create]');
     assert.equal(new URL(C.url()).pathname,'/');
