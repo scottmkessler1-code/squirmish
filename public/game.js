@@ -348,6 +348,26 @@ function drawWorm(w){
   g.fillStyle='rgba(0,0,0,.55)';g.fillRect(x-12,y-38,24,13);g.fillStyle='#fff';g.fillText(Math.max(0,w.hp),x,y-28);
   g.fillStyle=w.team.color;g.fillRect(x-12,y-39,24,2);
 }
+// damage numbers (drawing only, never part of the simulation): health each worm has lost this turn, as a red "-N"
+// over its head that appears with each hit and fades a little after the last one
+const DMG_SHOW=150,dmgSeen=new WeakMap();let dmgTurn='';
+function drawDamage(){
+  const key=curSeed+':'+cur+':'+(teams[cur]?teams[cur].turns:0),newTurn=key!==dmgTurn;dmgTurn=key;
+  g.font='600 17px Fredoka,system-ui,sans-serif';g.textAlign='center';g.lineJoin='round';
+  for(const w of worms){
+    const hp=Math.max(0,w.hp);let s=dmgSeen.get(w);
+    if(!s){s={base:hp,last:hp,t:-1e9,shown:0};dmgSeen.set(w,s)}
+    if(newTurn)s.base=s.last=hp;           // a label from the last turn keeps fading out on its own
+    if(hp<s.last){s.shown=s.base-hp;s.t=tick}
+    s.last=hp;
+    const age=tick-s.t;if(age>=DMG_SHOW||!s.shown)continue;
+    const y=w.y-46-Math.min(age,20)*.5;
+    g.globalAlpha=Math.min(1,(DMG_SHOW-age)/30);
+    g.lineWidth=4;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText('-'+s.shown,w.x,y);
+    g.fillStyle='#e01e37';g.fillText('-'+s.shown,w.x,y);
+  }
+  g.globalAlpha=1;
+}
 function draw(){
   g.shadowBlur=0;g.save();if(shake>.3){g.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake*=.88}else shake=0;
   g.drawImage(bgc,0,0);drawSky();g.drawImage(tc,0,0);
@@ -358,6 +378,7 @@ function draw(){
     g.beginPath();g.moveTo(c.x-7,c.y-13);g.lineTo(c.x+7,c.y);g.moveTo(c.x+7,c.y-13);g.lineTo(c.x-7,c.y);g.stroke();dot(c.x,c.y-6.5,3,'#ffd166');
   }
   for(const w of worms)if(!w.dead){drawWorm(w);const q=tick-(w.pt||-99);if(q<10){const r=8+q,gx=w.x+w.pa[0]*r,gy=w.y-7+w.pa[1]*r;dot(gx,gy,6,'#222');dot(gx,gy,4.8,'#e63946')}}
+  drawDamage();
   if(a&&phase==='aim'&&!a.dead){
     const ax=a.dir*Math.cos(aim),ay=-Math.sin(aim);
     dot(a.x+ax*45,a.y-7+ay*45,3.5,'#fff');g.strokeStyle='#222';g.lineWidth=1.5;g.beginPath();g.arc(a.x+ax*45,a.y-7+ay*45,5.5,0,7);g.stroke();
