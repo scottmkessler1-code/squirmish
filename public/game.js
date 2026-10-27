@@ -4,8 +4,9 @@
 (function(root){
 'use strict';
 const W=960,H=540,WATER=H-26,COLORS=['#ef476f','#ffd166','#06d6a0','#4cc9f0','#b388eb','#ff9f1c'];
-const WEAPONS=[{n:'Punch'},{n:'Rocket',r:34,d:45},{n:'Cluster',r:0,d:0},{n:'Shotgun'},{n:'Dynamite',r:55,d:75},{n:'Airstrike',r:28,d:30},{n:'Bomblet',r:16,d:18}];
-const ROCKETY=t=>t===1||t===5;
+const WEAPONS=[{n:'Punch'},{n:'Rocket',r:34,d:45},{n:'Cluster',r:24,d:30},{n:'Shotgun'},{n:'Dynamite',r:55,d:75},{n:'Airstrike',r:28,d:30},{n:'Bomblet',r:18,d:24}];
+const ROCKETY=t=>t===1||t===5;            // drawn as rockets, leave a smoke trail
+const IMPACT=t=>t===1||t===2||t===5;       // explode on hitting ground or a worm (the rest bounce until their fuse runs out)
 const GAMEKEYS=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Enter','1','2','3','4','5','6'];
 const ORDER=[1,2,3,4,5,0]; // weapon for keys 1..6; Punch (0) has unlimited ammo
 const PHASES=['menu','wait','aim','over'];
@@ -242,7 +243,7 @@ function punch(w){
 }
 function explode(p){
   const k=WEAPONS[p.t];p.dead=true;
-  if(p.t===2){burst(p.x,p.y,14,['#c77dff','#fff'],3);for(let i=0;i<5;i++)projs.push({x:p.x,y:p.y-4,vx:(i-2)*1.3+(rng()-.5),vy:-2-rng()*2,t:6,age:0,fuse:40+rng()*30})}
+  if(p.t===2){boom(p.x,p.y,k.r,k.d);burst(p.x,p.y,14,['#c77dff','#fff'],3);for(let i=0;i<5;i++)projs.push({x:p.x,y:p.y-4,vx:(i-2)*1.3+(rng()-.5),vy:-2-rng()*2,t:6,age:0,fuse:40+rng()*30})}
   else boom(p.x,p.y,k.r,k.d);
 }
 function shoot(w,ax,ay){
@@ -288,15 +289,15 @@ function stepProj(p){
   const n=Math.max(1,Math.ceil(Math.max(Math.abs(p.vx),Math.abs(p.vy))));
   for(let i=0;i<n;i++){
     const nx=p.x+p.vx/n,ny=p.y+p.vy/n;
-    const hitW=ROCKETY(p.t)&&worms.some(w=>!w.dead&&!(p.age<15&&w===active())&&Math.abs(nx-w.x)<6&&ny>w.y-13&&ny<w.y);
+    const hitW=IMPACT(p.t)&&worms.some(w=>!w.dead&&!(p.age<15&&w===active())&&Math.abs(nx-w.x)<6&&ny>w.y-13&&ny<w.y);
     if(solid(nx,ny)||hitW){
-      if(ROCKETY(p.t)){explode(p);return}
+      if(IMPACT(p.t)){explode(p);return}
       const sx=solid(nx,p.y),sy=solid(p.x,ny);
       if(sx&&!sy)p.vx*=-.5;else if(sy&&!sx){p.vy*=-.5;if(Math.abs(p.vy)<.6)p.vy=0}else{p.vx*=-.5;p.vy*=-.5}
       p.vx*=.85;p.hit=true;break;
     }else{p.x=nx;p.y=ny}
   }
-  if(!ROCKETY(p.t)&&--p.fuse<=0)explode(p);
+  if(!IMPACT(p.t)&&--p.fuse<=0)explode(p);
   if(p.y>WATER||p.x<-50||p.x>W+50)p.dead=true;
   if(ROCKETY(p.t)&&p.age%2===0&&g)parts.push({x:p.x,y:p.y,vx:0,vy:0,life:14,c:'#ddd'});
 }
@@ -362,7 +363,7 @@ function draw(){
   for(const p of projs){
     if(ROCKETY(p.t)){dot(p.x,p.y,3.5,'#444');dot(p.x,p.y,1.8,'#ff9f1c')}
     else if(p.t===4){g.fillStyle='#d62839';g.fillRect(p.x-2.5,p.y-9,5,10);g.fillStyle='#fff';g.fillRect(p.x-2.5,p.y-5,5,2);dot(p.x,p.y-11+Math.sin(tick),2,'#ffd166');g.font='600 10px Fredoka,sans-serif';g.textAlign='center';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-16)}
-    else{dot(p.x,p.y,p.t===6?2.5:4.5,p.t===2?'#8e5bd1':p.t===6?'#ff9f1c':'#4b6b2f');if(p.t!==6){g.fillStyle='#fff';g.font='600 10px Fredoka,sans-serif';g.textAlign='center';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-8)}}
+    else{dot(p.x,p.y,p.t===6?2.5:4.5,p.t===2?'#8e5bd1':p.t===6?'#ff9f1c':'#4b6b2f');if(!IMPACT(p.t)&&p.t!==6){g.fillStyle='#fff';g.font='600 10px Fredoka,sans-serif';g.textAlign='center';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-8)}}
   }
   for(const p of parts){g.globalAlpha=Math.min(1,p.life/20);dot(p.x,p.y,2.5,p.c)}g.globalAlpha=1;
   for(const q of rings){q.l++;q.r+=(q.max-q.r)*.25;g.strokeStyle='rgba(255,240,200,'+Math.max(0,.7-q.l/14)+')';g.lineWidth=4;g.beginPath();g.arc(q.x,q.y,q.r,0,7);g.stroke()}rings=rings.filter(q=>q.l<14);

@@ -105,3 +105,18 @@ test('forfeits replay identically',()=>{
   assert.equal(firstDiff(a.trace,b.trace),-1);
   assert.notEqual(firstDiff(a.trace,r.trace),-1,'forfeits had no effect');
 });
+
+test('cluster: bursts on hitting a worm and hurts it, then its bomblets go off',()=>{
+  const g=createGame();g.startGame(['A','B'],99);
+  while(g.phase!=='aim')g.update();
+  const me=g.active(),foe=g.worms.find(w=>w.team!==me.team&&!w.dead);
+  // put an enemy right in front, on the same footing, and fire the cluster flat with a little power
+  foe.x=me.x+me.dir*30;foe.y=me.y;foe.air=true;
+  for(let i=0;i<60;i++)g.update();
+  const hp=foe.hp,f=g.frame;
+  for(const e of [[1,'2',true],[2,'2',false],[3,'ArrowDown',true],[23,'ArrowDown',false],[24,' ',true],[34,' ',false]])g.submitInput({f:f+e[0],p:g.cur,k:e[1],d:e[2]});
+  let burst=false;
+  for(let i=0;i<400;i++){g.update();if(foe.hp<hp&&!burst)burst=g.frame-f}
+  assert.ok(burst&&burst<80,'cluster did not hurt the worm on contact');
+  assert.ok(hp-Math.max(0,foe.hp)>=15,'only '+(hp-foe.hp)+' damage');
+});
