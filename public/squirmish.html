@@ -61,13 +61,13 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 #names input{width:100%;min-width:0;background:none;border:0;color:#fff;font:inherit}
 #me{margin:10px 2px 0;font-weight:600;font-size:15px;display:flex;align-items:center;gap:6px}
 #who{margin:8px 2px 4px;font-weight:600;font-size:14px}
-#weapons{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;max-width:470px;transition:opacity .2s}
+#weapons{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;max-width:640px;transition:opacity .2s}
 #weapons.dim{opacity:.45}
 .w{position:relative;background:none;border:2px solid var(--line);border-radius:10px;color:var(--fg);padding:5px 2px 3px;display:flex;flex-direction:column;align-items:center;gap:1px}
-.w small{font-size:10px;white-space:nowrap}
+.w small{font-size:13px;white-space:nowrap}
 .k{position:absolute;top:3px;left:3px;min-width:16px;height:16px;border:1.5px solid var(--fg);border-bottom-width:3px;border-radius:4px;font:600 11px/11px Fredoka,system-ui,sans-serif;text-align:center;padding:0 2px;background:var(--bg)}
 .w.on .k{background:var(--accent);color:var(--bg);border-color:var(--accent)}
-.w svg{width:100%;max-width:34px;height:auto}
+.w svg{width:100%;max-width:51px;height:auto}
 .w.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent)}
 .w.empty{opacity:.4}
 .w .a{position:absolute;top:-7px;right:-4px;min-width:16px;height:16px;border-radius:8px;background:var(--accent);color:var(--bg);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;padding:0 3px}

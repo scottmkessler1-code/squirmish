@@ -45,8 +45,11 @@ const mask=new Uint8Array(W*H);let thash=0,tdirty=true;
 let tc=null,tg=null,bgc=null,bg=null;
 if(doc){tc=doc.createElement('canvas');tc.width=W;tc.height=H;tg=tc.getContext('2d');bgc=doc.createElement('canvas');bgc.width=W;bgc.height=H;bg=bgc.getContext('2d')}
 const solid=(x,y)=>{x=Math.floor(x);y=Math.floor(y);return x>=0&&x<W&&y>=0&&y<H&&mask[y*W+x]===1};
-const blocked=(x,y)=>{for(const dx of[-4,0,4])for(const dy of[-3,-8,-12])if(solid(x+dx,y+dy))return true;return false};
-const ground=(x,y)=>[-3,0,3].some(dx=>solid(x+dx,y+1));
+// worm body (drawn 1.5x the original size; the collision shape matches what you see): about 12 px wide, 19 px tall
+const blocked=(x,y)=>{for(const dx of[-6,0,6])for(const dy of[-3,-9,-14,-18])if(solid(x+dx,y+dy))return true;return false};
+const ground=(x,y)=>[-4,0,4].some(dx=>solid(x+dx,y+1));
+const inBody=(x,y,w)=>Math.abs(x-w.x)<9&&y>w.y-19&&y<w.y; // projectile/shotgun hit box
+const BODY_MID=9; // height of the body's centre above the feet
 // resting = feet on ground, or the body can't move down (a sliver under the body's wider x±4 probes used to wedge worms in mid-air forever)
 const resting=(x,y)=>ground(x,y)||blocked(x,y+1);
 function carve(cx,cy,r){
@@ -218,9 +221,9 @@ function burst(x,y,n,cols,sp){if(!g)return;for(let i=0;i<n;i++){const a=Math.ran
 function boom(x,y,r,maxd){
   carve(x,y,r);
   if(tg){tg.globalCompositeOperation='destination-out';tg.beginPath();tg.arc(x,y,r,0,7);tg.fill();tg.globalCompositeOperation='source-atop';tg.strokeStyle='rgba(25,12,8,.6)';tg.lineWidth=6;tg.beginPath();tg.arc(x,y,r+2,0,7);tg.stroke();tg.globalCompositeOperation='source-over'}
-  rings.push({x,y,r:r*.3,max:r*1.7,l:0});shake=Math.max(shake,r/5);
-  for(const w of worms){if(w.dead)continue;const dx=w.x-x,dy=w.y-6-y,d=dhypot(dx,dy);
-    if(d<r+14){const f=1-d/(r+14);w.hp-=Math.round(maxd*f);sfx('hurt');w.vx+=dx/(d||1)*f*6;w.vy+=dy/(d||1)*f*6-1.5*f;w.air=true;w.y-=1}}
+  rings.push({x,y,r0:r*.3,max:r*1.7,t0:tick});shake=Math.max(shake,r/5);
+  for(const w of worms){if(w.dead)continue;const dx=w.x-x,dy=w.y-BODY_MID-y,d=dhypot(dx,dy);
+    if(d<r+18){const f=1-d/(r+18);w.hp-=Math.round(maxd*f);sfx('hurt');w.vx+=dx/(d||1)*f*6;w.vy+=dy/(d||1)*f*6-1.5*f;w.air=true;w.y-=1}}
   burst(x,y,40,['#ffd166','#ff9f1c','#ef476f','#555'],5);burst(x,y,22,['#8c5b3b','#5a3a2a','#62c24b'],5);sfx('boom',Math.min(1,r/55));
 }
 function dropCrate(){
@@ -232,17 +235,17 @@ function stepCrates(){
     const sup=[-5,0,5].some(dx=>solid(c.x+dx,c.y+1));
     if(!c.landed){c.y+=1.4;if(sup)c.landed=true;if(c.y>WATER)c.gone=true}else if(!sup)c.landed=false;
     for(const w of worms){if(c.gone||w.dead)continue;
-      if(Math.abs(w.x-c.x)<10&&c.y>w.y-15&&c.y-12<w.y){c.gone=true;
+      if(Math.abs(w.x-c.x)<13&&c.y>w.y-22&&c.y-12<w.y){c.gone=true;
         const got=c.items.map(([i,n])=>{w.team.ammo[i]+=n;return '+'+n+' '+WEAPONS[i].n});
         toast=w.team.name+' found '+got.join(', ');toastT=180;burst(c.x,c.y-6,14,['#ffd166','#fff'],3);sfx('pickup')}}
   }
   crates=crates.filter(c=>!c.gone);
 }
 function punch(w){
-  const ax=w.dir*dcos(aim),ay=-dsin(aim),px=w.x+ax*14,py=w.y-7+ay*14;
+  const ax=w.dir*dcos(aim),ay=-dsin(aim),px=w.x+ax*21,py=w.y-10+ay*21;
   w.pt=tick;w.pa=[ax,ay];
   for(const o of worms){if(o.dead||o===w)continue;
-    if(dhypot(o.x-px,o.y-6-py)<14){o.hp-=20;sfx('hurt');o.vx+=ax*4.5;o.vy-=3.5;o.air=true;o.y-=1;burst(px,py,10,['#fff','#ffd166'],3)}}
+    if(dhypot(o.x-px,o.y-BODY_MID-py)<20){o.hp-=20;sfx('hurt');o.vx+=ax*4.5;o.vy-=3.5;o.air=true;o.y-=1;burst(px,py,10,['#fff','#ffd166'],3)}}
 }
 function explode(p){
   const k=WEAPONS[p.t];p.dead=true;
@@ -251,9 +254,9 @@ function explode(p){
 }
 function shoot(w,ax,ay){
   for(let s=0;s<2;s++){const a=datan2(ay,ax)+(s?.04:-.04),dx=dcos(a),dy=dsin(a);
-    for(let d=12;d<520;d+=2){const x=w.x+dx*d+wind*d*d*.00009,y=w.y-7+dy*d;
+    for(let d=16;d<520;d+=2){const x=w.x+dx*d+wind*d*d*.00009,y=w.y-10+dy*d;
       if(d%8===0&&g)parts.push({x,y,vx:0,vy:0,life:6,c:'#fff'});
-      if(solid(x,y)||worms.some(o=>!o.dead&&o!==w&&Math.abs(x-o.x)<6&&y>o.y-13&&y<o.y)){boom(x,y,13,34);break}}}
+      if(solid(x,y)||worms.some(o=>!o.dead&&o!==w&&inBody(x,y,o))){boom(x,y,13,34);break}}}
 }
 function fire(){
   const w=active(),sp=2+power*10,ax=w.dir*dcos(aim),ay=-dsin(aim);
@@ -261,9 +264,9 @@ function fire(){
   sfx(weapon===3?'shot':weapon===0?'punch':weapon===5?'whistle':weapon===4?'plant':'launch');
   if(weapon===0)punch(w);
   else if(weapon===3)shoot(w,ax,ay);
-  else if(weapon===4)projs.push({x:w.x+ax*9,y:w.y-7+ay*9,vx:ax*sp,vy:ay*sp,t:4,age:0,fuse:300}); // thrown: a tap drops it close, a long charge throws it far
+  else if(weapon===4)projs.push({x:w.x+ax*14,y:w.y-10+ay*14,vx:ax*sp,vy:ay*sp,t:4,age:0,fuse:300}); // thrown: a tap drops it close, a long charge throws it far
   else if(weapon===5){const tx=Math.max(10,Math.min(W-10,w.x+w.dir*(80+power*560)));for(let i=0;i<5;i++)projs.push({x:tx+(i-2)*22,y:-20-i*14,vx:w.dir*.4,vy:2+rng()*.5,t:5,age:99,fuse:0})}
-  else projs.push({x:w.x+ax*9,y:w.y-7+ay*9,vx:ax*sp,vy:ay*sp,t:weapon,age:0,fuse:weapon===2?150:180});
+  else projs.push({x:w.x+ax*14,y:w.y-10+ay*14,vx:ax*sp,vy:ay*sp,t:weapon,age:0,fuse:weapon===2?150:180});
   charging=false;power=0;phase='wait';settle=0;retreat=RETREAT;
 }
 function stepWorm(w){
@@ -292,7 +295,7 @@ function stepProj(p){
   const n=Math.max(1,Math.ceil(Math.max(Math.abs(p.vx),Math.abs(p.vy))));
   for(let i=0;i<n;i++){
     const nx=p.x+p.vx/n,ny=p.y+p.vy/n;
-    const hitW=IMPACT(p.t)&&worms.some(w=>!w.dead&&!(p.age<15&&w===active())&&Math.abs(nx-w.x)<6&&ny>w.y-13&&ny<w.y);
+    const hitW=IMPACT(p.t)&&worms.some(w=>!w.dead&&!(p.age<15&&w===active())&&inBody(nx,ny,w));
     if(solid(nx,ny)||hitW){
       if(IMPACT(p.t)){explode(p);return}
       const sx=solid(nx,p.y),sy=solid(p.x,ny);
@@ -328,25 +331,69 @@ function update(){
 }
 
 // ---- rendering (browser only; reads state, never changes gameplay) ----
-function drawWorm(w){
-  const x=w.x,y=w.y;
-  const d=w.dir,wig=tick-(w.wt||-99)<8,N=6,seg=[];
-  for(let i=0;i<=N;i++){const u=i/N,k=wig?Math.sin(tick/2+i*1.2)*1.4:0;seg.push({x:x-d*10*(1-u)*(1-u*.15),y:y-3.6-u*u*8+k,r:i===N?6.3:4.2+u*.8})}
-  g.fillStyle='#2b1d12';
-  for(let i=0;i<N;i++){const s=seg[i],f=wig?Math.sin(tick/2+i*1.7)*1.2:0;g.beginPath();g.ellipse(s.x+f,Math.min(s.y+s.r+.8,y+1),2.2,1.6,0,0,7);g.fill()}
-  for(const s of seg)dot(s.x,s.y,s.r+1.4,'rgba(0,0,0,.6)');
-  seg.forEach((s,i)=>{dot(s.x,s.y,s.r,w.team.color);if(i%2)dot(s.x,s.y,s.r,'rgba(255,255,255,.16)');dot(s.x-s.r*.25,s.y+s.r*.45,s.r*.5,'rgba(0,0,0,.12)');dot(s.x-s.r*.3,s.y-s.r*.4,s.r*.32,'rgba(255,255,255,.4)')});
-  const h=seg[N],lk=w===active()?-Math.sin(aim)*1.1:0,wb=Math.sin(tick/10+w.x)*1.5;
-  g.strokeStyle='#2b1d12';g.lineWidth=1.4;
-  for(const [bx,tx,ty] of [[-1,-3,-12],[3,6,-11.5]]){g.beginPath();g.moveTo(h.x+d*bx,h.y-5);g.quadraticCurveTo(h.x+d*(bx+tx)/2,h.y-9,h.x+d*tx+wb*d,h.y+ty);g.stroke();dot(h.x+d*tx+wb*d,h.y+ty,2.2,'#ffd166')}
-  dot(h.x+d*.2,h.y-1.5,3.1,'#fff');dot(h.x+d*4,h.y-1,2.7,'#fff');
-  dot(h.x+d*.9,h.y-1.5+lk,1.5,'#111');dot(h.x+d*4.6,h.y-1+lk,1.4,'#111');
-  dot(h.x+d*1.3,h.y-2.2+lk,.55,'#fff');dot(h.x+d*5,h.y-1.7+lk,.5,'#fff');
-  dot(h.x+d*2,h.y+3,1.6,'rgba(255,110,140,.55)');
-  g.strokeStyle='#2b1d12';g.lineWidth=1;g.beginPath();g.arc(h.x+d*3,h.y+2,2.3,.15,Math.PI-.15);g.stroke();
-  g.font='600 11px Fredoka,system-ui,sans-serif';g.textAlign='center';
-  g.fillStyle='rgba(0,0,0,.55)';g.fillRect(x-12,y-38,24,13);g.fillStyle='#fff';g.fillText(Math.max(0,w.hp),x,y-28);
-  g.fillStyle=w.team.color;g.fillRect(x-12,y-39,24,2);
+const WS=1.5; // worms are drawn 1.5x the original size, scaled from the feet
+const shadeCache=new Map();
+// a team colour mixed toward white (amt>0) or black (amt<0)
+function shade(hex,amt){
+  const k=hex+amt;let v=shadeCache.get(k);if(v)return v;
+  const n=parseInt(hex.slice(1),16),c=[n>>16,n>>8&255,n&255].map(x=>Math.round(amt>0?x+(255-x)*amt:x*(1+amt)));
+  v='rgb('+c+')';shadeCache.set(k,v);return v;
+}
+function drawWorm(w,idx){
+  const wig=tick-(w.wt||-99)<8,N=6,seg=[],col=w.team.color,me=w===active();
+  const hit=dmgSeen.get(w),hurt=hit&&tick-hit.t<45,low=w.hp<40,falling=w.air&&w.vy>3;
+  g.save();g.translate(w.x,w.y);g.scale(WS*w.dir,WS); // local coordinates: feet at 0,0, facing right
+  for(let i=0;i<=N;i++){const u=i/N,k=wig?Math.sin(tick/2+i*1.2)*1.4:0;seg.push({x:-10*(1-u)*(1-u*.15),y:-3.6-u*u*8+k,r:i===N?6.3:4.2+u*.8})}
+  // ground shadow and little feet
+  g.fillStyle='rgba(0,0,0,.18)';g.beginPath();g.ellipse(-4,.6,9.5,1.6,0,0,7);g.fill();
+  for(let i=0;i<N;i++){const s=seg[i],f=wig?Math.sin(tick/2+i*1.7)*1.2:0,fy=Math.min(s.y+s.r+.8,1);
+    g.fillStyle='#2b1d12';g.beginPath();g.ellipse(s.x+f,fy,2.2,1.5,0,0,7);g.fill();dot(s.x+f+.6,fy-.5,.55,'#6b5444')}
+  // body: dark outline, then shaded segments with spots, tail to head
+  for(const s of seg)dot(s.x,s.y,s.r+1.1,'#1d140d');
+  seg.forEach((s,i)=>{
+    const gr=g.createRadialGradient(s.x-s.r*.35,s.y-s.r*.45,s.r*.1,s.x,s.y,s.r*1.05);
+    gr.addColorStop(0,shade(col,.55));gr.addColorStop(.55,col);gr.addColorStop(1,shade(col,-.38));
+    g.fillStyle=gr;g.beginPath();g.arc(s.x,s.y,s.r,0,7);g.fill();
+    if(i===N)return;
+    dot(s.x+s.r*.1,s.y+s.r*.5,s.r*.42,'rgba(0,0,0,.10)');                      // belly shade
+    if(i%2)dot(s.x-s.r*.15,s.y-s.r*.5,s.r*.26,'rgba(255,255,255,.6)');          // pale spots
+    else dot(s.x+s.r*.05,s.y-s.r*.55,s.r*.2,shade(col,-.3));                    // dark spots
+  });
+  const h=seg[N],lk=me?-Math.sin(aim)*1.1:0,wb=Math.sin(tick/10+w.x)*1.5;
+  // antennae with shiny tips
+  g.strokeStyle='#2b1d12';g.lineWidth=1.3;g.lineCap='round';
+  for(const [bx,tx,ty] of [[-1,-3,-12],[3,6,-11.5]]){
+    const ex=h.x+tx+wb,ey=h.y+ty;
+    g.beginPath();g.moveTo(h.x+bx,h.y-5);g.quadraticCurveTo(h.x+(bx+tx)/2,h.y-9,ex,ey);g.stroke();
+    dot(ex,ey,2.3,'#1d140d');dot(ex,ey,1.8,'#ffd166');dot(ex-.6,ey-.6,.6,'#fff');
+  }
+  // cheek
+  dot(h.x+2.4,h.y+2.8,1.5,'rgba(255,100,130,.55)');
+  // eyes: outlined; blink now and then; squeezed shut when just hit; pupils follow the aim on your turn
+  const blink=!hurt&&(tick+idx*97)%260<7;
+  for(const [ex,ey,r,px,pr] of [[.2,-1.5,3.1,.9,1.5],[4,-1,2.7,4.6,1.4]]){
+    dot(h.x+ex,h.y+ey,r+.5,'#2b1d12');
+    if(blink){dot(h.x+ex,h.y+ey,r,shade(col,-.12));g.strokeStyle='#2b1d12';g.lineWidth=.6;g.beginPath();g.moveTo(h.x+ex-r*.8,h.y+ey+.3);g.lineTo(h.x+ex+r*.8,h.y+ey+.3);g.stroke();continue}
+    dot(h.x+ex,h.y+ey,r,'#fff');
+    if(hurt){g.strokeStyle='#111';g.lineWidth=.8;g.beginPath();g.moveTo(h.x+ex-r*.55,h.y+ey-r*.45);g.lineTo(h.x+ex+r*.2,h.y+ey);g.lineTo(h.x+ex-r*.55,h.y+ey+r*.45);g.stroke();continue}
+    const pp=falling?pr*.75:pr;
+    dot(h.x+px,h.y+ey+lk,pp,'#111');dot(h.x+px+.4,h.y+ey-.7+lk,pp*.37,'#fff');
+  }
+  // eyebrows: determined while charging a shot, worried when low on health or just hit
+  const brow=(a,b,c,dd)=>{g.strokeStyle='#2b1d12';g.lineWidth=1;g.beginPath();g.moveTo(h.x+a,h.y+b);g.lineTo(h.x+c,h.y+dd);g.stroke()};
+  if(me&&charging){brow(-2.6,-5.6,2,-4.4);brow(2.5,-4.5,6.3,-5.3)}
+  else if(low||hurt){brow(-2.6,-4.4,2,-5.9);brow(2.5,-5.8,6.2,-4.3)}
+  // mouth: open when hit or falling, frown when low, otherwise a smile
+  g.strokeStyle='#2b1d12';g.lineWidth=1;
+  if(hurt||falling){g.fillStyle='#5b1020';g.beginPath();g.ellipse(h.x+3.3,h.y+2.9,1.4,1.9,0,0,7);g.fill();dot(h.x+3.3,h.y+3.9,.8,'#ef6f8a')}
+  else if(low){g.beginPath();g.arc(h.x+3,h.y+4.7,2,Math.PI+.4,-.4);g.stroke()}
+  else{g.beginPath();g.arc(h.x+3,h.y+2,2.3,.15,Math.PI-.15);g.stroke()}
+  g.restore();
+  // health tag (not mirrored)
+  const ty=w.y-44;
+  g.font='600 13px Fredoka,system-ui,sans-serif';g.textAlign='center';
+  g.fillStyle='rgba(0,0,0,.6)';g.fillRect(w.x-16,ty-12,32,16);g.fillStyle=col;g.fillRect(w.x-16,ty-14,32,2.5);
+  g.fillStyle='#fff';g.fillText(Math.max(0,w.hp),w.x,ty);
 }
 // damage numbers (drawing only, never part of the simulation): health each worm has lost this turn, as a red "-N"
 // over its head that appears with each hit and fades a little after the last one
@@ -361,7 +408,7 @@ function drawDamage(){
     if(hp<s.last){s.shown=s.base-hp;s.t=tick}
     s.last=hp;
     const age=tick-s.t;if(age>=DMG_SHOW||!s.shown)continue;
-    const y=w.y-46-Math.min(age,20)*.5;
+    const y=w.y-63-Math.min(age,20)*.5;
     g.globalAlpha=Math.min(1,(DMG_SHOW-age)/30);
     g.lineWidth=4;g.strokeStyle='rgba(255,255,255,.9)';g.strokeText('-'+s.shown,w.x,y);
     g.fillStyle='#e01e37';g.fillText('-'+s.shown,w.x,y);
@@ -377,22 +424,37 @@ function draw(){
     g.fillStyle='#b9833f';g.fillRect(c.x-7,c.y-13,14,13);g.strokeStyle='#5a3a14';g.lineWidth=1.5;g.strokeRect(c.x-7,c.y-13,14,13);
     g.beginPath();g.moveTo(c.x-7,c.y-13);g.lineTo(c.x+7,c.y);g.moveTo(c.x+7,c.y-13);g.lineTo(c.x-7,c.y);g.stroke();dot(c.x,c.y-6.5,3,'#ffd166');
   }
-  for(const w of worms)if(!w.dead){drawWorm(w);const q=tick-(w.pt||-99);if(q<10){const r=8+q,gx=w.x+w.pa[0]*r,gy=w.y-7+w.pa[1]*r;dot(gx,gy,6,'#222');dot(gx,gy,4.8,'#e63946')}}
+  worms.forEach((w,i)=>{if(w.dead)return;drawWorm(w,i);const q=tick-(w.pt||-99);
+    if(q<10){const r=(8+q)*WS,gx=w.x+w.pa[0]*r,gy=w.y-10+w.pa[1]*r;dot(gx,gy,9,'#222');dot(gx,gy,7.2,'#e63946');dot(gx-2,gy-2.5,2,'rgba(255,255,255,.5)')}}); // punch glove
   drawDamage();
   if(a&&phase==='aim'&&!a.dead){
     const ax=a.dir*Math.cos(aim),ay=-Math.sin(aim);
-    dot(a.x+ax*45,a.y-7+ay*45,3.5,'#fff');g.strokeStyle='#222';g.lineWidth=1.5;g.beginPath();g.arc(a.x+ax*45,a.y-7+ay*45,5.5,0,7);g.stroke();
-    if(charging){for(let i=1;i<=10;i++)if(i/10<=power)dot(a.x+ax*(14+i*3.4),a.y-7+ay*(14+i*3.4),2.2,i>7?'#ef476f':'#ffd166')}
+    const cx=a.x+ax*62,cy=a.y-10+ay*62;dot(cx,cy,5,'#fff');g.strokeStyle='#222';g.lineWidth=2;g.beginPath();g.arc(cx,cy,8,0,7);g.stroke();
+    if(charging){for(let i=1;i<=10;i++)if(i/10<=power)dot(a.x+ax*(20+i*4.4),a.y-10+ay*(20+i*4.4),3.2,i>7?'#ef476f':'#ffd166')}
     if(charging&&weapon===5){const tx=Math.max(10,Math.min(W-10,a.x+a.dir*(80+power*560)));g.fillStyle='#ef476f';g.beginPath();g.moveTo(tx,36);g.lineTo(tx-9,16);g.lineTo(tx+9,16);g.fill()}
-    const by=a.y-50+Math.sin(tick/8)*3;g.fillStyle=a.team.color;g.beginPath();g.moveTo(a.x,by);g.lineTo(a.x-6,by-9);g.lineTo(a.x+6,by-9);g.fill();
+    const by=a.y-64+Math.sin(tick/8)*3;g.fillStyle=a.team.color;g.beginPath();g.moveTo(a.x,by);g.lineTo(a.x-6,by-9);g.lineTo(a.x+6,by-9);g.fill();
   }
   for(const p of projs){
-    if(ROCKETY(p.t)){dot(p.x,p.y,3.5,'#444');dot(p.x,p.y,1.8,'#ff9f1c')}
-    else if(p.t===4){g.fillStyle='#d62839';g.fillRect(p.x-2.5,p.y-9,5,10);g.fillStyle='#fff';g.fillRect(p.x-2.5,p.y-5,5,2);dot(p.x,p.y-11+Math.sin(tick),2,'#ffd166');g.font='600 10px Fredoka,sans-serif';g.textAlign='center';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-16)}
-    else{dot(p.x,p.y,p.t===6?2.5:4.5,p.t===2?'#8e5bd1':p.t===6?'#ff9f1c':'#4b6b2f');if(!IMPACT(p.t)&&p.t!==6){g.fillStyle='#fff';g.font='600 10px Fredoka,sans-serif';g.textAlign='center';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-8)}}
+    if(ROCKETY(p.t)){ // a rocket pointing where it flies
+      g.save();g.translate(p.x,p.y);g.rotate(Math.atan2(p.vy,p.vx));
+      dot(-10,0,2.6+Math.random()*1.4,'#ff9f1c');dot(-9,0,1.4,'#fff3b0');
+      g.fillStyle='#ef476f';g.beginPath();g.moveTo(-7,-2.4);g.lineTo(-10,-5.2);g.lineTo(-4,-2.4);g.moveTo(-7,2.4);g.lineTo(-10,5.2);g.lineTo(-4,2.4);g.fill();
+      g.fillStyle='#cfd8dc';g.strokeStyle='#37474f';g.lineWidth=.9;g.beginPath();g.rect(-8,-2.7,12,5.4);g.fill();g.stroke();
+      g.fillStyle='#ef476f';g.beginPath();g.moveTo(4,-2.7);g.lineTo(9,0);g.lineTo(4,2.7);g.closePath();g.fill();g.stroke();
+      g.restore();
+    }else if(p.t===4){ // dynamite: a stick with a burning fuse and its countdown
+      g.fillStyle='#4a0d16';g.fillRect(p.x-4.5,p.y-15,9,16.5);g.fillStyle='#d62839';g.fillRect(p.x-3.75,p.y-14.25,7.5,15);
+      g.fillStyle='#fff';g.fillRect(p.x-3.75,p.y-8.5,7.5,3);g.fillStyle='rgba(255,255,255,.35)';g.fillRect(p.x-3,p.y-14,1.5,14);
+      g.strokeStyle='#444';g.lineWidth=1.2;g.beginPath();g.moveTo(p.x,p.y-14.5);g.quadraticCurveTo(p.x+3,p.y-18,p.x+1,p.y-20);g.stroke();
+      dot(p.x+1,p.y-20.5+Math.sin(tick),2.8,'#ff9f1c');dot(p.x+1,p.y-20.5+Math.sin(tick),1.4,'#fff3b0');
+      g.font='600 13px Fredoka,sans-serif';g.textAlign='center';g.lineWidth=3;g.strokeStyle='rgba(0,0,0,.6)';g.strokeText(Math.ceil(p.fuse/60),p.x,p.y-26);g.fillStyle='#fff';g.fillText(Math.ceil(p.fuse/60),p.x,p.y-26);
+    }else if(p.t===2){dot(p.x,p.y,7.6,'#2a1b47');dot(p.x,p.y,6.75,'#8e5bd1');dot(p.x-2,p.y-2.2,2.1,'rgba(255,255,255,.55)');dot(p.x+2.6,p.y+2.4,1.2,'#c77dff')}
+    else{dot(p.x,p.y,4.6,'#5a2a00');dot(p.x,p.y,3.75,'#ff9f1c');dot(p.x-1.2,p.y-1.2,1.1,'#fff3b0')} // bomblet
   }
   for(const p of parts){g.globalAlpha=Math.min(1,p.life/20);dot(p.x,p.y,2.5,p.c)}g.globalAlpha=1;
-  for(const q of rings){q.l++;q.r+=(q.max-q.r)*.25;g.strokeStyle='rgba(255,240,200,'+Math.max(0,.7-q.l/14)+')';g.lineWidth=4;g.beginPath();g.arc(q.x,q.y,q.r,0,7);g.stroke()}rings=rings.filter(q=>q.l<14);
+  // shock rings age with the game clock, so ones from frames that were fast-forwarded without drawing just vanish
+  rings=rings.filter(q=>tick-q.t0<14);
+  for(const q of rings){const l=tick-q.t0,r=q.max-(q.max-q.r0)*Math.pow(.75,l);g.strokeStyle='rgba(255,240,200,'+Math.max(0,.7-l/14)+')';g.lineWidth=4;g.beginPath();g.arc(q.x,q.y,r,0,7);g.stroke()}
   const wg=g.createLinearGradient(0,WATER-6,0,H);wg.addColorStop(0,'rgba(70,170,210,.85)');wg.addColorStop(1,'rgba(15,70,120,.95)');g.fillStyle=wg;g.beginPath();g.moveTo(0,H);
   const wy=x=>WATER+Math.sin(x/40+tick/25)*3+Math.sin(x/17-tick/18)*1.5;
   for(let x=0;x<=W;x+=8)g.lineTo(x,wy(x));g.lineTo(W,H);g.fill();
