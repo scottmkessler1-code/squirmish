@@ -13,12 +13,28 @@ const ls=Lockstep.createLockstep({game,send:m=>send(m),onDesync:info=>console.wa
 let mode='home';
 
 // sound (synthesized with WebAudio, no files)
-let ac=null,master=null,muted=false,noiseBuf=null;
+// volume settings, 0-100, remembered per browser; effects at 100 = the original loudness
+const audioCfg={music:50,sfx:100,musicMuted:false,sfxMuted:false};
+try{Object.assign(audioCfg,JSON.parse(store.get('squirmish:audio')||'{}'))}catch{}
+let ac=null,master=null,musicGain=null,music=null,noiseBuf=null;
+const sfxLevel=()=>audioCfg.sfxMuted?0:audioCfg.sfx/100*.5,musicLevel=()=>audioCfg.musicMuted?0:audioCfg.music/100*.7;
+function applyAudio(){
+  if(master)master.gain.value=sfxLevel();
+  if(musicGain)musicGain.gain.value=musicLevel();
+  if(music){if(musicLevel()>0&&music.paused)music.play().catch(()=>{});else if(musicLevel()===0&&!music.paused)music.pause()}
+  store.set('squirmish:audio',JSON.stringify(audioCfg));
+}
+// browsers only allow sound after a click or key press, so this runs on the first one
 function initAudio(){
-  if(ac){if(ac.state==='suspended')ac.resume();return}
+  if(ac){if(ac.state==='suspended')ac.resume();if(music&&music.paused&&musicLevel()>0)music.play().catch(()=>{});return}
   const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
-  try{ac=new AC();master=ac.createGain();master.gain.value=muted?0:.5;master.connect(ac.destination);
-    noiseBuf=ac.createBuffer(1,ac.sampleRate*1.5,ac.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}catch(e){ac=null}
+  try{ac=new AC();master=ac.createGain();master.connect(ac.destination);
+    noiseBuf=ac.createBuffer(1,ac.sampleRate*1.5,ac.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}catch(e){ac=null;return}
+  // looping music, through its own gain node (iPhones ignore an audio element's volume)
+  music=document.createElement('audio');music.loop=true;music.preload='auto';
+  for(const [src,type] of [['/audio/crab-vibe.webm','audio/webm; codecs=opus'],['/audio/crab-vibe.m4a','audio/mp4']]){const so=document.createElement('source');so.src=src;so.type=type;music.appendChild(so)}
+  try{musicGain=ac.createGain();ac.createMediaElementSource(music).connect(musicGain);musicGain.connect(ac.destination)}catch(e){musicGain=null}
+  applyAudio();
 }
 function tone(f0,f1,dur,type,vol,delay){
   if(!ac)return;const t=ac.currentTime+(delay||0),o=ac.createOscillator(),gn=ac.createGain();
@@ -33,7 +49,7 @@ function noise(dur,f0,f1,vol,type,q){
   s.connect(fl);fl.connect(gn);gn.connect(master);s.start(t,Math.random()*.5);s.stop(t+dur+.02);
 }
 function sfx(n,a){
-  if(!ac||muted)return;
+  if(!ac||audioCfg.sfxMuted||!audioCfg.sfx)return;
   switch(n){
     case 'boom':noise(.5+a*.5,1800,60,.7,'lowpass');tone(110,30,.5+a*.3,'sine',.5);break;
     case 'launch':noise(.45,500,2500,.35,'bandpass',2);break;
@@ -278,8 +294,24 @@ card.addEventListener('keydown',e=>{
 $('#copy').onclick=e=>copyLink(e.currentTarget);
 $('#leave').onclick=leaveRoom;
 $('#again').onclick=()=>{showOffline();document.activeElement.blur()};
-const mb=$('#mute');
-mb.onclick=()=>{initAudio();muted=!muted;if(master)master.gain.value=muted?0:.5;mb.textContent=muted?'🔇 Muted':'🔊 Sound';mb.setAttribute('aria-pressed',muted);mb.blur()};
+// sound panel: music and effects each get a mute toggle and a volume slider
+const sb=$('#soundBtn'),sp=$('#soundPanel');
+function renderSound(){
+  for(const k of ['music','sfx']){
+    const m=audioCfg[k+'Muted'],b=$('#'+k+'Mute'),r=$('#'+k+'Vol');
+    b.textContent=m?'🔇':k==='music'?'🎵':'🔊';b.setAttribute('aria-pressed',m);b.title=(m?'Unmute ':'Mute ')+(k==='music'?'music':'sound effects');
+    r.value=audioCfg[k];r.disabled=m;$('#'+k+'Val').textContent=m?'off':audioCfg[k]+'%';
+  }
+  const all=(audioCfg.musicMuted||!audioCfg.music)&&(audioCfg.sfxMuted||!audioCfg.sfx);
+  sb.textContent=all?'🔇 Sound':'🔊 Sound';
+}
+sb.onclick=e=>{initAudio();sp.hidden=!sp.hidden;sb.setAttribute('aria-expanded',!sp.hidden);e.stopPropagation();
+  if(!sp.hidden){sp.style.right='0';const r=sp.getBoundingClientRect();if(r.left<8)sp.style.right=(r.left-8)+'px'}}; // keep it on screen on phones
+sp.addEventListener('click',e=>{e.stopPropagation();const b=e.target.closest('[data-mute]');if(!b)return;const k=b.dataset.mute+'Muted';audioCfg[k]=!audioCfg[k];initAudio();applyAudio();renderSound()});
+sp.addEventListener('input',e=>{const k=e.target.dataset.vol;if(!k)return;audioCfg[k]=+e.target.value;initAudio();applyAudio();renderSound()});
+addEventListener('click',()=>{if(!sp.hidden){sp.hidden=true;sb.setAttribute('aria-expanded',false)}});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&!sp.hidden){sp.hidden=true;sb.setAttribute('aria-expanded',false);sb.focus()}});
+renderSound();
 addEventListener('pointerdown',initAudio);
 
 // ---------- keyboard ----------
@@ -365,5 +397,5 @@ function loop(t){
 // hidden tabs get no animation frames (and throttled timers), so keep the simulation moving from a timer
 setInterval(()=>{if(document.hidden&&mode==='match')stepOnline(0,true)},250);
 
-if(location.hash==='#debug')window.__sq={game,ls,net}; // for tests and poking around
+if(location.hash==='#debug')window.__sq={game,ls,net,audio:()=>({music,musicGain,master,cfg:audioCfg,ac})}; // for tests and poking around
 game.preview(1);route();requestAnimationFrame(loop);

@@ -72,10 +72,22 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 .w.empty{opacity:.4}
 .w .a{position:absolute;top:-7px;right:-4px;min-width:16px;height:16px;border-radius:8px;background:var(--accent);color:var(--bg);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;padding:0 3px}
 #help{margin:10px 2px 0;font-size:14px;opacity:.85;line-height:1.5}
+#soundWrap{position:relative}
+#soundPanel{position:absolute;right:0;top:calc(100% + 6px);z-index:5;background:var(--bg);border:2px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:8px;width:min(300px,calc(100vw - 32px));box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.srow{display:grid;grid-template-columns:36px 58px 1fr 40px;align-items:center;gap:8px;font-size:15px}
+.srow input{width:100%;accent-color:var(--accent)}
+.srow input:disabled{opacity:.4}
+.srow span{font-size:13px;text-align:right;opacity:.8}
+.sm{width:36px;height:32px;border:2px solid var(--line);border-radius:8px;background:none;color:var(--fg);font-size:16px;padding:0}
+.sm[aria-pressed="true"]{background:color-mix(in srgb,var(--fg) 12%,transparent)}
 </style></head>
 <body><div id="wrap">
 <header><h1>Caterpillar Continental Combat</h1>
-<span id="hbtns"><span id="net" hidden></span><button class="hb" id="copy" hidden>Copy invite link</button><button class="hb" id="leave" hidden>Leave match</button><button class="hb" id="mute" aria-pressed="false">🔊 Sound</button><button class="hb" id="again" hidden>New game</button></span></header>
+<span id="hbtns"><span id="net" hidden></span><button class="hb" id="copy" hidden>Copy invite link</button><button class="hb" id="leave" hidden>Leave match</button><span id="soundWrap"><button class="hb" id="soundBtn" aria-expanded="false" aria-controls="soundPanel">🔊 Sound</button>
+<div id="soundPanel" hidden role="group" aria-label="Sound settings">
+<div class="srow"><button class="sm" id="musicMute" data-mute="music" aria-pressed="false"></button><label for="musicVol">Music</label><input type="range" id="musicVol" data-vol="music" min="0" max="100" step="5"><span id="musicVal"></span></div>
+<div class="srow"><button class="sm" id="sfxMute" data-mute="sfx" aria-pressed="false"></button><label for="sfxVol">Effects</label><input type="range" id="sfxVol" data-vol="sfx" min="0" max="100" step="5"><span id="sfxVal"></span></div>
+</div></span><button class="hb" id="again" hidden>New game</button></span></header>
 <div id="stage"><canvas id="c" width="960" height="540"></canvas>
 <div id="banner" role="status" hidden></div>
 <div id="menu"><div class="card" id="card"></div></div></div>

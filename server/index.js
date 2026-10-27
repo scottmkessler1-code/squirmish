@@ -34,7 +34,7 @@ function createServer({now=Date.now,maxRooms,fps,forfeitMs,createPerMin=CREATE_P
   const page=(req,res)=>res.sendFile(path.join(PUBLIC,'squirmish.html'));
   app.get('/',page);
   app.get('/r/:code',page);
-  app.use(express.static(PUBLIC,{index:false}));
+  app.use(express.static(PUBLIC,{index:false,setHeaders:(res,file)=>{if(file.endsWith('.webm'))res.set('Content-Type','audio/webm')}}));
 
   const server=http.createServer(app);
   const wss=new WebSocketServer({server,path:'/ws',maxPayload:MAX_SNAPSHOT});
