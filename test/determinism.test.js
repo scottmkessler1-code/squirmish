@@ -120,3 +120,38 @@ test('cluster: bursts on hitting a worm and hurts it, then its bomblets go off',
   assert.ok(burst&&burst<80,'cluster did not hurt the worm on contact');
   assert.ok(hp-Math.max(0,foe.hp)>=15,'only '+(hp-foe.hp)+' damage');
 });
+
+// fires the current weapon key after optional setup; returns the game and the shooter
+function shootWith(key,charge,extra=[]){
+  const g=createGame();g.startGame(['A','B'],99);
+  while(g.phase!=='aim')g.update();
+  const me=g.active(),f=g.frame,p=g.cur;
+  for(const [df,k,d] of [[1,key,true],[2,key,false],[3,'ArrowUp',true],[13,'ArrowUp',false],[14,' ',true],[14+charge,' ',false],...extra])g.submitInput({f:f+df,p,k,d});
+  return {g,me,f,p};
+}
+test('dynamite: a tap drops it close, a long charge throws it far',()=>{
+  // where the dynamite is just before its 5 s fuse runs out, measured from the thrower
+  const land=charge=>{const {g,me,f}=shootWith('4',charge);let last=null;
+    while(g.frame<f+14+charge+290){g.update();const d=g.getSnapshot().projs.find(p=>p.t===4);if(d)last=d}
+    return Math.abs(last.x-me.x);
+  };
+  const tap=land(1),thrown=land(60);
+  assert.ok(tap<60,'tapped dynamite landed '+tap+' px away');
+  assert.ok(thrown>tap+100,`thrown ${thrown} px vs tapped ${tap} px`);
+});
+test('retreat: after firing the worm can walk for 3 s, then the turn ends',()=>{
+  // shotgun fires instantly; then hold Right for 5 s
+  const {g,me,f,p}=shootWith('3',1,[[30,'ArrowRight',true],[330,'ArrowRight',false]]);
+  const pos=[];let turnEnded=0;
+  while(g.frame<f+600){g.update();pos.push(me.x);if(!turnEnded&&g.cur!==p)turnEnded=g.frame-f}
+  const fired=14,moved=(a,b)=>Math.abs(pos[b]-pos[a])>3;
+  assert.ok(moved(fired+20,fired+150),'could not walk after firing');
+  assert.ok(!moved(fired+200,fired+300),'kept walking after the retreat time');
+  assert.ok(turnEnded>=fired+179,'turn ended before the retreat time was over ('+turnEnded+')');
+  // and a snapshot taken mid-retreat carries it over
+  const {g:a}=shootWith('3',1,[[30,'ArrowRight',true],[330,'ArrowRight',false]]);
+  while(a.frame<f+80)a.update();
+  const b=createGame();b.loadSnapshot(JSON.parse(JSON.stringify(a.getSnapshot())));
+  b.submitInput({f:f+330,p,k:'ArrowRight',d:false});
+  for(let i=0;i<300;i++){a.update();b.update();assert.equal(b.stateHash(),a.stateHash())}
+});

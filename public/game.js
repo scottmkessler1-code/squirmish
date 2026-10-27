@@ -56,7 +56,8 @@ function carve(cx,cy,r){
 }
 function terrainHash(){if(tdirty){let h=0;for(let i=0;i<mask.length;i++)h=(Math.imul(h,31)+mask[i])|0;thash=h;tdirty=false}return thash}
 
-let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapon=1,power=0,charging=false,aim=.5,winner=null,settle=0,waitT=0,tick=0;
+let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapon=1,power=0,charging=false,aim=.5,winner=null,settle=0,waitT=0,retreat=0,tick=0;
+const RETREAT=180; // frames the worm may keep walking after firing (3 s)
 const keys={};
 // seeded RNG: all gameplay randomness uses rng() so every computer can build the same match from one seed
 let rs=1,curSeed=1;
@@ -83,7 +84,7 @@ function applyInput(ev){
   if(phase!=='aim'||!w)return;
   if(k.length===1&&k>='1'&&k<='6'){if(!charging)weapon=ORDER[+k-1]}
   else if(k==='Enter'){if(!w.air&&!charging){w.air=true;w.vy=-2.8;w.vx=w.dir*1.6;w.y-=1;sfx('jump')}}
-  else if(k===' '){if(!charging&&(weapon===0||w.team.ammo[weapon]>0)){if(weapon<1||weapon===3||weapon===4)fire();else{charging=true;power=0}}}
+  else if(k===' '){if(!charging&&(weapon===0||w.team.ammo[weapon]>0)){if(weapon<1||weapon===3)fire();else{charging=true;power=0}}}
 }
 function stateHash(){
   let h=terrainHash()|0;const m=v=>{h=(Math.imul(h,31)+Math.round(v*1000))|0};
@@ -91,7 +92,7 @@ function stateHash(){
   for(const p of projs){m(p.x);m(p.y);m(p.vx);m(p.vy);m(p.t);m(p.fuse)}
   for(const c of crates){m(c.x);m(c.y)}
   teams.forEach(t=>{t.ammo.forEach(m);m(t.turns)});m(cur);m(timer);m(frame);
-  m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(wind);m(rs/1000);
+  m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(retreat);m(wind);m(rs/1000);
   for(const k of GAMEKEYS)m(keys[k]?1:0);
   return h>>>0;
 }
@@ -161,7 +162,7 @@ const WORM_KEYS=['x','y','vx','vy','hp','dir','air','dead'],PROJ_KEYS=['x','y','
 function encodeMask(){const r=[];let v=0,n=0;for(let i=0;i<mask.length;i++){if(mask[i]!==v){r.push(n);v=mask[i];n=0}n++}r.push(n);return r}
 function decodeMask(r){let i=0,v=0;for(const n of r){mask.fill(v,i,i+n);i+=n;v^=1}if(i!==mask.length)throw new Error('bad terrain size');tdirty=true}
 function getSnapshot(){
-  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,
+  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,
     winner:winner?teams.indexOf(winner):-1,keys:GAMEKEYS.filter(k=>keys[k]),
     teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo]})),
     worms:worms.map(w=>({...pick(w,WORM_KEYS),team:teams.indexOf(w.team)})),
@@ -186,7 +187,7 @@ function loadSnapshot(s){
   projs=s.projs.map(unpick);
   crates=s.crates.map(o=>({...unpick(o),items:o.items.map(x=>[...x])}));
   frame=s.frame;tick=s.tick;rs=s.rs;cur=s.cur;phase=s.phase;timer=s.timer;wind=un(s.wind);weapon=s.weapon;power=un(s.power);
-  charging=s.charging;aim=un(s.aim);settle=s.settle;waitT=s.waitT;winner=s.winner>=0?teams[s.winner]:null;
+  charging=s.charging;aim=un(s.aim);settle=s.settle;waitT=s.waitT;retreat=s.retreat||0;winner=s.winner>=0?teams[s.winner]:null;
   for(const k in keys)keys[k]=false;for(const k of s.keys)keys[k]=true;
   inputQ.length=0;parts=[];rings=[];shake=0;toastT=0;
 }
@@ -200,14 +201,14 @@ function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k
   teams.forEach((t,ti)=>{for(let k=0;k<2;k++){
     const s=slots.pop(),w={x:(s+.5)*W/total+(rng()-.5)*20,y:8,vx:0,vy:0,hp:100,team:t,dir:s<total/2?1:-1,air:true,dead:false};
     t.worms.push(w);worms.push(w);}});
-  nextTurn();dropCrate();dropCrate();phase='wait';settle=-60;waitT=0; // let worms drop in first
+  nextTurn();dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0; // let worms drop in first
 }
 function nextTurn(){
   const alive=teams.filter(t=>t.worms.some(w=>!w.dead));
   if(alive.length<2){phase='over';winner=alive[0]||null;sfx('win');return}
   do{cur=(cur+1)%teams.length}while(!teams[cur].worms.some(w=>!w.dead));
   const t=teams[cur],al=t.worms.filter(w=>!w.dead);t.act=al[t.turns++%al.length];
-  if(crates.length<4&&rng()<.6)dropCrate();timer=1800;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;
+  if(crates.length<4&&rng()<.6)dropCrate();timer=1800;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;
 }
 const active=()=>teams[cur]&&teams[cur].act;
 
@@ -258,10 +259,10 @@ function fire(){
   sfx(weapon===3?'shot':weapon===0?'punch':weapon===5?'whistle':weapon===4?'plant':'launch');
   if(weapon===0)punch(w);
   else if(weapon===3)shoot(w,ax,ay);
-  else if(weapon===4)projs.push({x:w.x+w.dir*8,y:w.y-4,vx:w.dir*.6,vy:-1,t:4,age:0,fuse:300});
+  else if(weapon===4)projs.push({x:w.x+ax*9,y:w.y-7+ay*9,vx:ax*sp,vy:ay*sp,t:4,age:0,fuse:300}); // thrown: a tap drops it close, a long charge throws it far
   else if(weapon===5){const tx=Math.max(10,Math.min(W-10,w.x+w.dir*(80+power*560)));for(let i=0;i<5;i++)projs.push({x:tx+(i-2)*22,y:-20-i*14,vx:w.dir*.4,vy:2+rng()*.5,t:5,age:99,fuse:0})}
   else projs.push({x:w.x+ax*9,y:w.y-7+ay*9,vx:ax*sp,vy:ay*sp,t:weapon,age:0,fuse:weapon===2?150:180});
-  charging=false;power=0;phase='wait';settle=0;
+  charging=false;power=0;phase='wait';settle=0;retreat=RETREAT;
 }
 function stepWorm(w){
   if(w.air){
@@ -314,11 +315,13 @@ function update(){
     if(charging){power=Math.min(1,power+.013);if(tick%5===0)sfx('charge',power);if(power>=1)fire()}
     if(timer<=300&&timer>0&&timer%60===0)sfx('tick');if(--timer<=0){charging=false;phase='wait';settle=0}
   }else if(phase==='aim')phase='wait';
+  // after firing, the worm can keep walking for a few seconds to get clear
+  if(phase==='wait'&&retreat>0){retreat--;if(w&&!w.dead&&!w.air){if(keys.ArrowLeft)walk(w,-1);if(keys.ArrowRight)walk(w,1)}}
   if(phase==='wait'){
     const still=!projs.length&&worms.every(x=>x.dead||!x.air);
     settle=still?settle+1:Math.min(settle,0);
     // safety net: never let a stuck projectile or worm hold the match for more than 30 s
-    if(settle>80||++waitT>1800)nextTurn();
+    if((settle>80&&retreat<=0)||++waitT>1800)nextTurn();
   }
 }
 
@@ -382,7 +385,7 @@ function hud(a){g.shadowColor='rgba(0,0,0,.6)';g.shadowBlur=3;
   if(a&&phase!=='over'){
     g.font='600 18px Fredoka,sans-serif';g.fillStyle='#fff';
     g.fillText(a.team.name+'’s turn · '+WEAPONS[weapon].n,10,22);
-    g.textAlign='right';g.fillText(phase==='aim'?Math.ceil(timer/60)+'s':'…',W-10,22);
+    g.textAlign='right';g.fillText(phase==='aim'?Math.ceil(timer/60)+'s':retreat>0?'Retreat! '+Math.ceil(retreat/60)+'s':'…',W-10,22);
     g.font='600 12px Fredoka,sans-serif';g.fillText('wind',W-92,42);
     g.fillStyle='rgba(0,0,0,.3)';g.fillRect(W-86,36,76,8);g.fillStyle='#fff';
     g.fillRect(W-48+(wind<0?wind*38:0),36,Math.abs(wind)*38,8);
