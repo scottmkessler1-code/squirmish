@@ -121,6 +121,38 @@ test('resync: when everyone agrees, a checkpoint is still taken every couple of 
   assert.equal(sent(f,b.id,'snapshot').length,0);
 });
 
+// ---------- leaving, dropping out and forfeits, fake time ----------
+const {FORFEIT_MS,BACK_TO_LOBBY_MS}=require('../server/rooms');
+test('forfeit: leaving mid-match forfeits at once; a dropped player has FORFEIT_MS to come back',()=>{
+  const f=started(4),[a,b,c,d]=f.ps,box=f.inbox.get(a.id);f.advance(1000);
+  assert.equal(f.r.input(a,{k:'forfeit',d:true}),'bad_message','clients cannot send forfeits');
+  const upTo=f.r.match.clock.sentUpTo;
+  f.r.leave(b,f.t);
+  const fb=f.r.match.clock.log.find(e=>e.k==='forfeit');
+  assert.deepEqual([fb.p,fb.d],[1,true]);assert.ok(fb.f>upTo,'forfeit stamped into the past');
+  assert.deepEqual(box.filter(m=>m.t==='player_left').map(m=>[m.slot,m.reason]),[[1,'left']]);
+  f.advance(100);assert.ok(box.some(m=>m.t==='step'&&m.inputs.includes(fb)),'forfeit delivered in a step');
+  // c drops and comes back in time: nothing; d drops for good: forfeits after FORFEIT_MS
+  f.r.disconnect(c,f.t);f.r.disconnect(d,f.t);
+  f.advance(FORFEIT_MS/2);f.r.join({token:c.token},()=>{},f.t);
+  for(let i=0;i<FORFEIT_MS/2/200;i++)f.advance(200);
+  f.advance(200);
+  assert.deepEqual(f.r.match.clock.log.filter(e=>e.k==='forfeit').map(e=>e.p),[1,3]);
+  assert.equal(box.filter(m=>m.t==='player_left').at(-1).reason,'timeout');
+  f.advance(FORFEIT_MS*2);assert.equal(f.r.match.clock.log.filter(e=>e.k==='forfeit').length,2,'forfeited twice');
+});
+
+test('forfeit: when nobody is left to report the end, the server ends the match',()=>{
+  const f=started(2),[a,b]=f.ps,v=f.add('V',true),box=f.inbox.get(v.id);f.advance(1000);
+  f.r.leave(b,f.t);f.advance(50);
+  assert.equal(box.filter(m=>m.t==='match_over').length,0,'a is still there to report the result');
+  f.r.disconnect(a,f.t);f.advance(50);
+  const mo=box.filter(m=>m.t==='match_over');
+  assert.equal(mo.length,1);assert.equal(mo[0].winner,0);assert.equal(mo[0].name,'P0');
+  f.advance(BACK_TO_LOBBY_MS);
+  assert.equal(f.r.state,'lobby');assert.equal(f.r.players.length,0,'dropped player keeps no seat');assert.equal(f.r.spectators.length,1);
+});
+
 // ---------- whole matches over real sockets ----------
 const FPS=1200; // 20x real time so a full match takes seconds
 // in-order delivery after a random delay, like a TCP stream with jitter (plain setTimeouts would reorder messages)
@@ -233,4 +265,35 @@ test('a full online match stays in sync through latency, a hidden tab, a reconne
   off.trace.forEach((h,i)=>assert.equal(h,ref.get((i+1)*60),'offline replay differs at frame '+(i+1)*60));
   if(mo)assert.equal(mo.winner,a.game.teams.indexOf(a.game.winner));
   console.log(`  ${last} frames, ${log.inputs.length} inputs, ${mo?'winner '+mo.name:'no winner by the frame cap'}, stall messages ${a.msgs.filter(m=>m.t==='stall').length}`);
+});
+
+test('online forfeits: one player leaves, another vanishes; the match ends for the last team and everyone returns to the lobby',{timeout:60_000},async()=>{
+  const srv=createServer({fps:FPS,forfeitMs:1500});await new Promise(r=>srv.server.listen(0,r));
+  const base='http://localhost:'+srv.server.address().port,url=base.replace('http','ws')+'/ws';
+  const code=(await (await fetch(base+'/api/rooms',{method:'POST'})).json()).code;
+  const [a,b,c]=['a','b','c'].map(n=>netClient(url,{name:n,lat:[5,50]})),v=netClient(url,{name:'v'}),all=[a,b,c,v];
+  try{
+    a.join(code,'Ann');await until(()=>a.you,2000,'a');b.join(code,'Bo');c.join(code,'Cy');v.join(code,'V',{spectate:true});
+    await until(()=>b.you&&c.you&&v.you,2000,'joined');
+    [a,b,c].forEach((x,i)=>{addBot(x,i+7);x.ws.send(JSON.stringify({t:'ready',ready:true}))});
+    await new Promise(r=>setTimeout(r,200));a.ws.send(JSON.stringify({t:'start'}));
+    await until(()=>all.every(x=>x.ls.started),3000,'started');
+    const room=srv.rooms.get(code);let log=null;
+    const keep=setInterval(()=>{if(room.match)log={seed:room.match.seed,names:room.match.names,inputs:[...room.match.clock.log]}},20);
+    await until(()=>a.game.frame>900,10000,'frame 900');
+    b.ws.send(JSON.stringify({t:'leave'}));          // on purpose
+    c.stop();c.ws.terminate();                       // connection dies and never comes back
+    await until(()=>[a,v].every(x=>x.msgs.some(m=>m.t==='match_over')),20000,'match over');
+    clearInterval(keep);
+    const mo=a.msgs.find(m=>m.t==='match_over');
+    assert.equal(mo.winner,0);assert.equal(mo.name,'Ann');
+    assert.deepEqual(a.msgs.filter(m=>m.t==='player_left').map(m=>[m.slot,m.reason]),[[1,'left'],[2,'timeout']]);
+    assert.equal(a.game.winner.name,'Ann');assert.ok(a.game.teams[1].worms.every(w=>w.dead)&&a.game.teams[2].worms.every(w=>w.dead));
+    await until(()=>a.msgs.some(m=>m.t==='lobby'&&m.state==='lobby'&&a.msgs.indexOf(m)>a.msgs.indexOf(mo)),8000,'back to lobby');
+    const lobby=[...a.msgs].reverse().find(m=>m.t==='lobby');
+    assert.deepEqual(lobby.players.map(p=>p.name),['Ann']);assert.deepEqual(lobby.spectators.map(s=>s.name),['V']);
+    // a and the spectator agree with each other and with an offline replay of the server log
+    const last=Math.max(...a.trace.keys()),off=replay(log.seed,log.names,log.inputs,last);
+    off.trace.forEach((h,i)=>{const f=(i+1)*60;assert.equal(a.trace.get(f),h,'a vs replay at '+f);if(v.trace.has(f))assert.equal(v.trace.get(f),h,'v vs replay at '+f)});
+  }finally{all.forEach(x=>{try{x.stop()}catch{}});await srv.close()}
 });

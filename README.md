@@ -33,7 +33,7 @@ Client → server
 
 Server → client: `welcome {you, token, code, state, host, players, spectators, seatWanted, match?}`,
 `lobby {state, host, players:[{id, slot, name, ready, connected}], spectators:[{id, name, connected}]}`,
-`you {you}`, `start {seed, names, startFrame, you}`, `host {id, slot}`, `player_left {slot, id}`,
+`you {you}`, `start {seed, names, startFrame, you}`, `host {id, slot}`, `player_left {slot, id, reason: 'left'|'timeout'}`,
 `match_over {winner, name, backInMs}`, `replaced`, `error {code}`, `pong {c}`,
 `step {upTo, inputs:[{f, p, k, d}]}`, `stall {waiting:[id]}` (empty list = running again),
 `desync {frame}`, `snapshot_req {}`, `snapshot {data, inputs, upTo, e}`.
@@ -68,3 +68,12 @@ checkpoint for late joiners, and one is also taken every 2 minutes while everyon
 Snapshots (`game.getSnapshot()` / `loadSnapshot()`) hold the full simulation state as JSON, about 5–10 KB: worms, teams
 and ammo, projectiles, crates, turn state, RNG state, held keys, and the terrain as run lengths. Loading rebuilds the
 landscape picture from the seed and erases the craters.
+
+## Leaving and dropping out
+- **Leave** during a match: the server stamps a `forfeit` input for that team (`{f, p, k:'forfeit', d:true}`), so every
+  client knocks that team out on the same frame. Clients can't send `forfeit` themselves.
+- **Dropped connection**: the player has 60 s to come back with their token (the page reconnects on its own). Their turns
+  time out meanwhile. After 60 s, their team forfeits.
+- A forfeit that leaves one team ends the current turn at once, so the result shows straight away.
+- If nobody who could report the end is still connected, the server ends the match itself and returns to the lobby.
+- The host leaving or dropping hands the host role to the next connected player (or a spectator if none).

@@ -27,7 +27,7 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 #menu.hide{display:none}
 @media (max-width:640px){#menu{position:static;margin-top:8px;padding:8px 0}}
 #banner{position:absolute;left:50%;top:44px;transform:translateX(-50%);background:rgba(0,0,0,.72);color:#fff;border-radius:20px;padding:7px 16px;font-weight:600;font-size:15px;max-width:90%;text-align:center;pointer-events:none}
-.card{width:min(440px,92%);text-align:center;padding:14px 0;margin:auto}
+.card{width:min(520px,92%);text-align:center;padding:14px 0;margin:auto}
 .card h2{font-size:30px;line-height:1.1;margin:0 0 4px;font-weight:600}
 .card p{margin:0 0 14px;opacity:.85}
 .card .code{letter-spacing:.12em;color:#ffd166}
@@ -43,6 +43,7 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 .or{opacity:.6;margin:4px 0 10px;font-size:14px}
 .msg{min-height:1.3em;font-size:15px;color:#ffd166;margin:8px 0 0}
 #seats{list-style:none;padding:0;margin:0 0 10px;display:grid;gap:5px}
+@media (min-width:641px){#seats{grid-template-columns:1fr 1fr}.card .field{margin-bottom:10px}}
 #seats li{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.1);border-radius:10px;padding:6px 10px;text-align:left;font-size:16px}
 #seats li.me{outline:2px solid rgba(255,255,255,.6)}
 #seats li.empty{opacity:.45}

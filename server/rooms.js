@@ -8,6 +8,7 @@ const CODE_LEN=5,MAX_PLAYERS=6,MAX_SPECTATORS=20,MIN_PLAYERS=2,NAME_MAX=12;
 const LOBBY_GRACE_MS=60_000;        // a dropped lobby member keeps their seat this long
 const ROOM_IDLE_MS=30*60_000;       // rooms with nobody connected are deleted after this
 const BACK_TO_LOBBY_MS=5_000;       // results screen before everyone returns to the lobby
+const FORFEIT_MS=60_000;            // a player who dropped mid-match has this long to come back before their team forfeits
 // lockstep clock
 const FPS=60;                       // server frames per second (tests may speed this up)
 const INPUT_DELAY=6;                // inputs are stamped this many frames after the server receives them
@@ -29,8 +30,8 @@ function cleanName(n){
 }
 
 class Room{
-  constructor(code,now,{fps=FPS}={}){
-    this.code=code;this.fps=fps;this.members=new Map(); // token -> member
+  constructor(code,now,{fps=FPS,forfeitMs=FORFEIT_MS}={}){
+    this.code=code;this.fps=fps;this.forfeitMs=forfeitMs;this.members=new Map(); // token -> member
     this.state='lobby';this.hostId=null;this.match=null;this.emptySince=now;this.returnAt=0;this.nextId=1;
   }
   get list(){return [...this.members.values()]}
@@ -96,7 +97,7 @@ class Room{
   // leaving on purpose: gone at once, no grace period
   leave(m,now){
     this.members.delete(m.token);m.connected=false;
-    if(this.match&&this.match.teamOf.has(m.id)){const team=this.match.teamOf.get(m.id);this.match.left.add(team);this.broadcast({t:'player_left',slot:team,id:m.id})}
+    if(this.match&&this.match.teamOf.has(m.id))this.forfeit(this.match.teamOf.get(m.id),m.id,'left',now);
     if(this.state==='lobby')this.pack();
     if(this.hostId===m.id)this.promoteHost();
     if(!this.connected.length)this.emptySince=now;
@@ -163,8 +164,29 @@ class Room{
     const team=mt.teamOf.get(m.id);
     if(team===undefined||mt.left.has(team))return 'not_playing';
     if(!GAMEKEYS.includes(k)||typeof d!=='boolean')return 'bad_message';
-    const c=mt.clock,ev={f:Math.max(c.frame+INPUT_DELAY,c.sentUpTo+1),p:team,k,d}; // never a frame clients may already have run
+    this.stamp(team,k,d);
+  }
+  stamp(p,k,d){
+    const c=this.match.clock,ev={f:Math.max(c.frame+INPUT_DELAY,c.sentUpTo+1),p,k,d}; // never a frame clients may already have run
     c.log.push(ev);c.pending.push(ev);
+  }
+  // the team is out: every client applies the same 'forfeit' input on the same frame
+  forfeit(team,id,reason,now){
+    const mt=this.match;
+    if(!mt||mt.done||mt.left.has(team))return;
+    mt.left.add(team);this.stamp(team,'forfeit',true);
+    this.broadcast({t:'player_left',slot:team,id,reason});
+    this.checkAbandoned(now);
+  }
+  // nobody left who could report the end (at most one team still in, and none of the seated players connected):
+  // the server ends the match itself so spectators aren't stuck on a finished game
+  checkAbandoned(now){
+    const mt=this.match;if(!mt||mt.done)return;
+    const inTeams=[...new Set(mt.teamOf.values())].filter(t=>!mt.left.has(t));
+    const voters=this.players.filter(p=>p.connected&&mt.teamOf.has(p.id));
+    if(inTeams.length>1||voters.length)return;
+    const w=inTeams.length===1?inTeams[0]:-1;mt.done=true;this.returnAt=now+BACK_TO_LOBBY_MS;
+    this.broadcast({t:'match_over',winner:w,name:w>=0?mt.names[w]:null,backInMs:BACK_TO_LOBBY_MS});
   }
   ack(m,frame){
     const c=this.match?.clock;
@@ -176,6 +198,10 @@ class Room{
     if(this.returnAt&&now>=this.returnAt)return this.backToLobby();
     if(this.match)this.tickSync(now);
     const mt=this.match;
+    if(this.state==='playing'&&mt&&!mt.done){
+      for(const [id,team] of mt.teamOf){const m=this.byId(id);if(m&&!m.connected&&now-m.leftAt>=this.forfeitMs)this.forfeit(team,id,'timeout',now)}
+      this.checkAbandoned(now);
+    }
     if(this.state!=='playing'||!mt||mt.done)return;
     const c=mt.clock,dt=Math.min(250,now-c.last);c.last=now;
     // wait for connected, caught-up players whose acks fall behind; never for spectators or players still catching up
@@ -274,16 +300,16 @@ class Room{
 }
 
 class Rooms{
-  constructor({now=Date.now,maxRooms=500,fps=FPS}={}){this.rooms=new Map();this.now=now;this.maxRooms=maxRooms;this.fps=fps}
+  constructor({now=Date.now,maxRooms=500,fps=FPS,forfeitMs=FORFEIT_MS}={}){this.rooms=new Map();this.now=now;this.maxRooms=maxRooms;this.opts={fps,forfeitMs}}
   create(){
     if(this.rooms.size>=this.maxRooms)return null;
     let code;do code=randomCode();while(this.rooms.has(code));
-    const r=new Room(code,this.now(),{fps:this.fps});this.rooms.set(code,r);return r;
+    const r=new Room(code,this.now(),this.opts);this.rooms.set(code,r);return r;
   }
   get(code){return typeof code==='string'?this.rooms.get(code.toUpperCase()):undefined}
   tickClocks(){const now=this.now();for(const r of this.rooms.values())r.tickClock(now)}
   sweep(){const now=this.now();for(const [c,r] of this.rooms)if(!r.tick(now))this.rooms.delete(c)}
 }
 
-module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS,
+module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS,FORFEIT_MS,
   FPS,INPUT_DELAY,STALL_LAG_S,RESUME_LAG_S,STALL_MAX_MS,HASH_EVERY,HASH_WAIT_MS,SNAPSHOT_WAIT_MS,CHECKPOINT_EVERY};

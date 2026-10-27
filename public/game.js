@@ -67,6 +67,14 @@ let crates=[],toast='',toastT=0,rings=[],shake=0,frame=0,inputQ=[];
 function submitInput(ev){inputQ.push(ev);inputQ.sort((a,b)=>a.f-b.f)}
 function sendInput(k,d){submitInput({f:frame+INPUT_DELAY,p:cur,k,d})}
 function applyInput(ev){
+  // forfeit comes only from the server (a player left or never came back): that team is out at once, turn or not
+  if(ev.k==='forfeit'){
+    if(phase==='menu'||!teams[ev.p])return;
+    for(const w of teams[ev.p].worms)if(!w.dead)w.hp=0;
+    // nobody left to fight: end the turn now so the result shows in a moment, not when the timer runs out
+    if(phase==='aim'&&teams.filter(t=>t.worms.some(w=>w.hp>0)).length<2){charging=false;phase='wait';settle=0}
+    return;
+  }
   if(ev.p!==cur||phase==='menu')return;
   const k=ev.k,w=active();
   if(!ev.d){keys[k]=false;if(k===' '&&charging&&phase==='aim')fire();return}

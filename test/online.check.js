@@ -49,9 +49,9 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const turnPage=async()=>{for(;;){for(const p of [A,B]){const mine=await p.evaluate(()=>__sq.game.phase==='aim'&&__sq.game.cur===__sq.ls.myTeam);if(mine)return p}await sleep(100)}};
     for(let turn=0;turn<3;turn++){
       const P=await turnPage(),O=P===A?B:A;
-      assert.match(await P.textContent('#who'),/Your turn/);
-      assert.match(await O.textContent('#who'),/Waiting for/);
-      assert.equal(await O.evaluate(()=>document.querySelector('#weapons').classList.contains('dim')),true);
+      // labels follow the game on the next drawn frame, and the other page may be a few frames behind: wait for them
+      await P.waitForFunction(()=>/Your turn/.test(document.querySelector('#who').textContent),null,{timeout:3000});
+      await O.waitForFunction(()=>/Waiting for/.test(document.querySelector('#who').textContent)&&document.querySelector('#weapons').classList.contains('dim'),null,{timeout:3000});
       if(turn===0)await shot(P,'2-my-turn');
       // the other player's keys must do nothing
       const before=await O.evaluate(()=>__sq.game.active().x);
@@ -92,6 +92,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     assert.equal(new URL(C.url()).pathname,'/');
     await sleep(300);
     assert.equal(srv.rooms.get(code).spectators.length,0);
+    // B leaves mid-match: A is told, B's team is out, A wins, and both A and the room return to the lobby
+    B.on('dialog',d=>d.accept());
+    await B.click('#leave');await B.waitForSelector('[data-act=create]');
+    await A.waitForFunction(()=>/Bo left the match|wins!/.test(document.querySelector('#banner').textContent),null,{timeout:5000});
+    await A.waitForFunction(()=>/Ann wins! Back to the lobby/.test(document.querySelector('#banner').textContent),null,{timeout:10000});
+    await shot(A,'7-won-by-forfeit');
+    await A.waitForSelector('#seats li.me',{timeout:10000});
+    assert.equal(await A.$$eval('#seats li:not(.empty)',l=>l.length),1,'B still has a seat');
+    assert.equal(await A.isVisible('#readyBtn'),true);
+    await shot(A,'8-back-in-lobby');
+    console.log('leave mid-match: forfeit, win banner, back to the lobby');
     assert.deepEqual(errors,[]);
     console.log('no page errors; screenshots in screens/');
   }finally{await browser.close();await srv.close()}

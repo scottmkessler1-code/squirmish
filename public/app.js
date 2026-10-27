@@ -190,13 +190,18 @@ function onServer(m){
       if(m.state==='playing')enterMatch();else{showLobby();if(m.seatWanted)flash('The room is full, so you’re watching. Take a seat when one opens.')}
       break;
     case 'lobby':
+      if(mode==='match'&&net.lobby)for(const p of m.players){ // a seated player dropped or came back during the match
+        const was=net.lobby.players.find(q=>q.id===p.id);
+        if(was&&was.connected&&!p.connected&&p.id!==net.you?.id)toast(`${p.name} lost connection. They have 60 s to come back.`);
+        if(was&&!was.connected&&p.connected&&p.id!==net.you?.id)toast(`${p.name} is back`);
+      }
       net.lobby=m;
       if(m.state==='lobby'&&mode==='match'){net.over=null;showLobby()}else renderLobby();
       break;
     case 'you':net.you=m.you;renderLobby();break;
     case 'start':net.you=m.you;net.over=null;enterMatch();break;
     case 'match_over':net.over={...m,at:performance.now()};break;
-    case 'player_left':toast(`${nameOf(m.id)||'A player'} left the match`);break;
+    case 'player_left':toast(m.reason==='timeout'?`${nameOf(m.id)||'A player'} didn’t come back in time. Their team is out.`:`${nameOf(m.id)||'A player'} left the match. Their team is out.`);break;
     case 'host':if(mode==='room'&&m.id===net.you?.id)flash('You’re the host now.');break;
     case 'pong':net.ping=Math.round(performance.now()-m.c);break;
     case 'replaced':net.fatal=true;showHome('This room is open in another tab, so this one was closed.');break;

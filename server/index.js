@@ -10,8 +10,8 @@ const MAX_DROPPED=120;           // close sockets that keep flooding
 const HEARTBEAT_MS=15_000,SWEEP_MS=10_000,STEP_MS=50;
 const CREATE_PER_MIN=20;         // new rooms per IP per minute
 
-function createServer({now=Date.now,maxRooms,fps,createPerMin=CREATE_PER_MIN}={}){
-  const rooms=new Rooms({now,maxRooms,fps});
+function createServer({now=Date.now,maxRooms,fps,forfeitMs,createPerMin=CREATE_PER_MIN}={}){
+  const rooms=new Rooms({now,maxRooms,fps,forfeitMs});
   const app=express();
   app.disable('x-powered-by');app.set('trust proxy',1);
   app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');next()});

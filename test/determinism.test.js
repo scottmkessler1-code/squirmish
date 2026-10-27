@@ -76,3 +76,32 @@ test('summary of recorded matches',()=>{
   for(const c of CASES){const r=runs.get(c.seed);
     console.log(`  seed ${c.seed}: ${c.names.length} teams, ${r.frames} frames, ${r.summary.turns} turns, ${r.script.length} inputs, ${r.summary.phase==='over'?'won by '+r.summary.winner:'unfinished'}`)}
 });
+
+test('forfeit: knocks a team out at once, on or off its turn, and the last team standing wins',()=>{
+  const g=createGame();g.startGame(['A','B','C'],99);
+  while(g.phase!=='aim')g.update();
+  const turn=g.cur,other=(turn+1)%3;
+  g.submitInput({f:g.frame+1,p:other,k:'forfeit',d:true});g.update();
+  assert.ok(g.teams[other].worms.every(w=>w.dead),'off-turn team not out');
+  assert.equal(g.cur,turn);assert.equal(g.phase,'aim','current turn interrupted');
+  g.submitInput({f:g.frame+1,p:turn,k:'forfeit',d:true});g.update();
+  assert.equal(g.phase,'wait','forfeiting team kept its turn');
+  for(let i=0;i<200&&g.phase!=='over';i++)g.update();
+  assert.equal(g.phase,'over');assert.equal(g.winner,g.teams[3-turn-other]);
+});
+
+test('forfeit: when it leaves one team, the current turn ends right away',()=>{
+  const g=createGame();g.startGame(['A','B'],99);
+  while(g.phase!=='aim')g.update();
+  const t0=g.frame;g.submitInput({f:g.frame+1,p:1-g.cur,k:'forfeit',d:true});
+  while(g.phase!=='over'&&g.frame<t0+600)g.update();
+  assert.equal(g.phase,'over');assert.ok(g.frame-t0<150,'took '+(g.frame-t0)+' frames');
+});
+
+test('forfeits replay identically',()=>{
+  const c=CASES[3],r=runs.get(c.seed);
+  const s=[...r.script,{f:900,p:1,k:'forfeit',d:true},{f:2000,p:3,k:'forfeit',d:true}];
+  const a=replay(c.seed,c.names,s,r.frames),b=replay(c.seed,c.names,s,r.frames,{incremental:true});
+  assert.equal(firstDiff(a.trace,b.trace),-1);
+  assert.notEqual(firstDiff(a.trace,r.trace),-1,'forfeits had no effect');
+});
