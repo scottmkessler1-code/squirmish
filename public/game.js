@@ -201,7 +201,9 @@ function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k
   teams.forEach((t,ti)=>{for(let k=0;k<2;k++){
     const s=slots.pop(),w={x:(s+.5)*W/total+(rng()-.5)*20,y:8,vx:0,vy:0,hp:100,team:t,dir:s<total/2?1:-1,air:true,dead:false};
     t.worms.push(w);worms.push(w);}});
-  nextTurn();dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0; // let worms drop in first
+  // a random team starts: nextTurn() after the drop-in moves on to the team after cur
+  cur=(Math.floor(rng()*teams.length)+teams.length-1)%teams.length;
+  dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0; // let worms drop in first
 }
 function nextTurn(){
   const alive=teams.filter(t=>t.worms.some(w=>!w.dead));

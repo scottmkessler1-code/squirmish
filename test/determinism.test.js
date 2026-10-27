@@ -155,3 +155,17 @@ test('retreat: after firing the worm can walk for 3 s, then the turn ends',()=>{
   b.submitInput({f:f+330,p,k:'ArrowRight',d:false});
   for(let i=0;i<300;i++){a.update();b.update();assert.equal(b.stateHash(),a.stateHash())}
 });
+
+test('a random team starts each match, and it is the same on every client',()=>{
+  const firsts=n=>{const seen=new Map();
+    for(let seed=1;seed<=300;seed++){const g=createGame();g.startGame(Array.from({length:n},(_,i)=>'T'+i),seed);
+      while(g.phase!=='aim')g.update();
+      const again=createGame();again.startGame(Array.from({length:n},(_,i)=>'T'+i),seed);while(again.phase!=='aim')again.update();
+      assert.equal(again.cur,g.cur,'same seed, different first team');
+      assert.equal(g.teams[g.cur].turns,1,'first team skipped a worm');assert.ok(g.teams.every((t,i)=>i===g.cur||t.turns===0));
+      seen.set(g.cur,(seen.get(g.cur)||0)+1)}
+    return seen};
+  for(const n of [2,3,6]){const s=firsts(n);
+    assert.equal(s.size,n,`with ${n} teams only teams ${[...s.keys()]} ever started`);
+    for(const [t,c] of s)assert.ok(c>300/n*0.5,`team ${t} started only ${c} of 300 matches`)}
+});
