@@ -1,12 +1,20 @@
 // Rooms and lobby: membership, seats, readiness, host, match start and the return to the lobby.
 // Socket-agnostic: each member carries a send(msg) function, and the clock is injected so tests can fast-forward time.
 const crypto=require('crypto');
+const {GAMEKEYS}=require('../public/game.js');
 
 const CODE_ALPHABET='ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 const CODE_LEN=5,MAX_PLAYERS=6,MAX_SPECTATORS=20,MIN_PLAYERS=2,NAME_MAX=12;
 const LOBBY_GRACE_MS=60_000;        // a dropped lobby member keeps their seat this long
 const ROOM_IDLE_MS=30*60_000;       // rooms with nobody connected are deleted after this
 const BACK_TO_LOBBY_MS=5_000;       // results screen before everyone returns to the lobby
+// lockstep clock
+const FPS=60;                       // server frames per second (tests may speed this up)
+const INPUT_DELAY=6;                // inputs are stamped this many frames after the server receives them
+// pause the clock when a player's ack falls this far behind, resume under this. Acks trail the clock by about
+// RTT + the client ack interval (200 ms) + the step interval even when all is well, so these leave room for a ~400 ms ping.
+const STALL_LAG_S=1.5,RESUME_LAG_S=0.75;
+const STALL_MAX_MS=8_000;           // after this long, stop waiting for the laggards (they catch up on their own)
 
 const randomCode=()=>Array.from({length:CODE_LEN},()=>CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)]).join('');
 const isCode=c=>typeof c==='string'&&c.length===CODE_LEN&&[...c].every(ch=>CODE_ALPHABET.includes(ch));
@@ -16,8 +24,8 @@ function cleanName(n){
 }
 
 class Room{
-  constructor(code,now){
-    this.code=code;this.members=new Map(); // token -> member
+  constructor(code,now,{fps=FPS}={}){
+    this.code=code;this.fps=fps;this.members=new Map(); // token -> member
     this.state='lobby';this.hostId=null;this.match=null;this.emptySince=now;this.returnAt=0;this.nextId=1;
   }
   get list(){return [...this.members.values()]}
@@ -49,6 +57,7 @@ class Room{
     if(m){ // reconnect: same seat, same role
       const was=m.connected,old=m.send;m.send=send;m.connected=true;m.leftAt=0;
       if(was&&old!==send)old({t:'replaced'}); // another tab took over this seat
+      this.match?.clock.synced.delete(m.id); // catching up from the log; don't stall others meanwhile
       if(this.state==='lobby'&&typeof name==='string')m.name=this.uniqueName(cleanName(name),m);
     }else{
       if(this.members.size>=MAX_PLAYERS+MAX_SPECTATORS)return {error:'room_full'};
@@ -62,7 +71,8 @@ class Room{
     if(!this.hostId||!this.byId(this.hostId)?.connected)this.hostId=m.id;
     const welcome={t:'welcome',you:this.you(m),token:m.token,...this.view(),code:this.code,
       seatWanted:!spectate&&m.role==='spectator'}; // asked to play but the room was full or mid-match
-    if(this.match)welcome.match={seed:this.match.seed,names:this.match.names,startFrame:0};
+    if(this.match){const c=this.match.clock; // late joiners fast-forward from frame 0 using the full input log
+      welcome.match={seed:this.match.seed,names:this.match.names,startFrame:0,inputs:c.log.filter(e=>e.f<=c.sentUpTo),upTo:c.sentUpTo,done:!!this.match.done}}
     m.send(welcome);
     this.broadcastLobby();
     return {member:m};
@@ -108,7 +118,8 @@ class Room{
     if(!ps.every(p=>p.ready&&p.connected))return 'not_ready';
     this.pack();
     this.state='playing';
-    this.match={seed,names:ps.map(p=>p.name),teamOf:new Map(ps.map(p=>[p.id,p.slot])),left:new Set(),over:new Map(),startedAt:now};
+    this.match={seed,names:ps.map(p=>p.name),teamOf:new Map(ps.map(p=>[p.id,p.slot])),left:new Set(),over:new Map(),startedAt:now,
+      clock:{frame:0,acc:0,last:now,sentUpTo:0,pending:[],log:[],acks:new Map(),synced:new Set(),stalled:null,stallSince:0}};
     for(const x of this.list)if(x.connected)x.send({t:'start',seed,names:this.match.names,startFrame:0,you:this.you(x)});
     this.broadcastLobby();
   }
@@ -136,6 +147,45 @@ class Room{
     this.broadcastLobby();
   }
 
+  // ---- lockstep clock: the server never simulates; it stamps inputs with a frame and tells clients how far they may run
+  input(m,{k,d}){
+    const mt=this.match;
+    if(this.state!=='playing'||!mt||mt.done)return 'not_playing';
+    const team=mt.teamOf.get(m.id);
+    if(team===undefined||mt.left.has(team))return 'not_playing';
+    if(!GAMEKEYS.includes(k)||typeof d!=='boolean')return 'bad_message';
+    const c=mt.clock,ev={f:Math.max(c.frame+INPUT_DELAY,c.sentUpTo+1),p:team,k,d}; // never a frame clients may already have run
+    c.log.push(ev);c.pending.push(ev);
+  }
+  ack(m,frame){
+    const c=this.match?.clock;
+    if(!c||!Number.isInteger(frame))return;
+    c.acks.set(m.id,frame);
+    if(c.frame-frame<=RESUME_LAG_S*this.fps)c.synced.add(m.id);
+  }
+  tickClock(now){
+    if(this.returnAt&&now>=this.returnAt)return this.backToLobby();
+    const mt=this.match;
+    if(this.state!=='playing'||!mt||mt.done)return;
+    const c=mt.clock,dt=Math.min(250,now-c.last);c.last=now;
+    // wait for connected, caught-up players whose acks fall behind; never for spectators or players still catching up
+    const lim=(c.stalled?RESUME_LAG_S:STALL_LAG_S)*this.fps;
+    let waiting=this.players.filter(p=>p.connected&&c.synced.has(p.id)&&!mt.left.has(mt.teamOf.get(p.id))&&c.frame-(c.acks.get(p.id)??0)>lim).map(p=>p.id);
+    if(waiting.length&&c.stalled&&now-c.stallSince>=STALL_MAX_MS){for(const id of waiting)c.synced.delete(id);waiting=[]}
+    if(waiting.join()!==(c.stalled||[]).join()){
+      if(!c.stalled)c.stallSince=now;
+      c.stalled=waiting.length?waiting:null;
+      this.broadcast({t:'stall',waiting});
+    }
+    if(!c.stalled){c.acc+=dt*this.fps/1000;const n=Math.floor(c.acc);c.acc-=n;c.frame+=n}
+    // every input from now on is stamped >= frame+INPUT_DELAY, so clients may safely run up to frame+INPUT_DELAY-1
+    const upTo=c.frame+INPUT_DELAY-1;
+    if(upTo>c.sentUpTo){
+      const inputs=c.pending.filter(e=>e.f<=upTo);c.pending=c.pending.filter(e=>e.f>upTo);c.sentUpTo=upTo;
+      this.broadcast({t:'step',upTo,inputs});
+    }
+  }
+
   // housekeeping; returns false when the room should be deleted
   tick(now){
     if(this.returnAt&&now>=this.returnAt)this.backToLobby();
@@ -148,14 +198,16 @@ class Room{
 }
 
 class Rooms{
-  constructor({now=Date.now,maxRooms=500}={}){this.rooms=new Map();this.now=now;this.maxRooms=maxRooms}
+  constructor({now=Date.now,maxRooms=500,fps=FPS}={}){this.rooms=new Map();this.now=now;this.maxRooms=maxRooms;this.fps=fps}
   create(){
     if(this.rooms.size>=this.maxRooms)return null;
     let code;do code=randomCode();while(this.rooms.has(code));
-    const r=new Room(code,this.now());this.rooms.set(code,r);return r;
+    const r=new Room(code,this.now(),{fps:this.fps});this.rooms.set(code,r);return r;
   }
   get(code){return typeof code==='string'?this.rooms.get(code.toUpperCase()):undefined}
+  tickClocks(){const now=this.now();for(const r of this.rooms.values())r.tickClock(now)}
   sweep(){const now=this.now();for(const [c,r] of this.rooms)if(!r.tick(now))this.rooms.delete(c)}
 }
 
-module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS};
+module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS,
+  FPS,INPUT_DELAY,STALL_LAG_S,RESUME_LAG_S,STALL_MAX_MS};

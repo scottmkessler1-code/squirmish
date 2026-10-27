@@ -7,11 +7,11 @@ const MAX_MSG=2048;              // bytes, for everything except snapshots
 const MAX_SNAPSHOT=1<<20;        // bytes
 const RATE=30,BURST=60;          // messages per second per socket, token bucket
 const MAX_DROPPED=120;           // close sockets that keep flooding
-const HEARTBEAT_MS=15_000,SWEEP_MS=10_000;
+const HEARTBEAT_MS=15_000,SWEEP_MS=10_000,STEP_MS=50;
 const CREATE_PER_MIN=20;         // new rooms per IP per minute
 
-function createServer({now=Date.now,maxRooms,createPerMin=CREATE_PER_MIN}={}){
-  const rooms=new Rooms({now,maxRooms});
+function createServer({now=Date.now,maxRooms,fps,createPerMin=CREATE_PER_MIN}={}){
+  const rooms=new Rooms({now,maxRooms,fps});
   const app=express();
   app.disable('x-powered-by');app.set('trust proxy',1);
   app.use((req,res,next)=>{res.set('X-Content-Type-Options','nosniff');next()});
@@ -70,6 +70,8 @@ function createServer({now=Date.now,maxRooms,createPerMin=CREATE_PER_MIN}={}){
         case 'name':err=room.setName(me,msg.name);break;
         case 'role':err=room.setRole(me,msg.spectate);break;
         case 'start':err=room.start(me,t);break;
+        case 'input':err=room.input(me,msg);break;
+        case 'ack':room.ack(me,msg.frame);break;
         case 'over':err=room.reportOver(me,msg,t);break;
         case 'leave':room.leave(me,t);me=null;room=null;ws.close(1000,'left');break;
         default:err='unknown_type';
@@ -82,7 +84,8 @@ function createServer({now=Date.now,maxRooms,createPerMin=CREATE_PER_MIN}={}){
 
   const beat=setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue}ws.isAlive=false;ws.ping()}},HEARTBEAT_MS);
   const sweep=setInterval(()=>{rooms.sweep();const t=now();for(const [ip,ts] of created)if(!ts.some(x=>t-x<60_000))created.delete(ip)},SWEEP_MS);
-  const close=()=>new Promise(res=>{clearInterval(beat);clearInterval(sweep);for(const ws of wss.clients)ws.terminate();wss.close();server.close(()=>res())});
+  const step=setInterval(()=>rooms.tickClocks(),STEP_MS);
+  const close=()=>new Promise(res=>{clearInterval(beat);clearInterval(sweep);clearInterval(step);for(const ws of wss.clients)ws.terminate();wss.close();server.close(()=>res())});
   return {app,server,wss,rooms,close};
 }
 
