@@ -1,0 +1,6 @@
+node_modules
+screens
+test
+*.png
+.git
+original-squirmish.html

@@ -1,0 +1,13 @@
+# Render blueprint: New > Blueprint, pick this repo. One web service; rooms live in memory, so keep it to one instance.
+services:
+  - type: web
+    name: squirmish
+    runtime: node
+    plan: starter            # the free plan sleeps when idle, which ends every open room
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

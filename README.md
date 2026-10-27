@@ -77,3 +77,6 @@ landscape picture from the seed and erases the craters.
 - A forfeit that leaves one team ends the current turn at once, so the result shows straight away.
 - If nobody who could report the end is still connected, the server ends the match itself and returns to the lobby.
 - The host leaving or dropping hands the host role to the next connected player (or a spectator if none).
+
+## Deploying
+See [DEPLOY.md](DEPLOY.md): Render blueprint (`render.yaml`), `fly.toml`, and a `Dockerfile` for Railway or anything else.
