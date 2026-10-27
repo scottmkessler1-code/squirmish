@@ -61,6 +61,7 @@ function terrainHash(){if(tdirty){let h=0;for(let i=0;i<mask.length;i++)h=(Math.
 
 let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapon=1,power=0,charging=false,aim=.5,winner=null,settle=0,waitT=0,retreat=0,tick=0;
 const RETREAT=180; // frames the worm may keep walking after firing (3 s)
+const TURN_TIME=900; // frames per turn (15 s)
 const keys={};
 // seeded RNG: all gameplay randomness uses rng() so every computer can build the same match from one seed
 let rs=1,curSeed=1;
@@ -213,7 +214,7 @@ function nextTurn(){
   if(alive.length<2){phase='over';winner=alive[0]||null;sfx('win');return}
   do{cur=(cur+1)%teams.length}while(!teams[cur].worms.some(w=>!w.dead));
   const t=teams[cur],al=t.worms.filter(w=>!w.dead);t.act=al[t.turns++%al.length];
-  if(crates.length<4&&rng()<.6)dropCrate();timer=1800;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;
+  if(crates.length<4&&rng()<.6)dropCrate();timer=TURN_TIME;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;
 }
 const active=()=>teams[cur]&&teams[cur].act;
 
@@ -277,7 +278,8 @@ function stepWorm(w){
       const nx=w.x+w.vx/n;if(!blocked(nx,w.y))w.x=nx;else w.vx*=-.4;
       const ny=w.y+w.vy/n;
       if(w.vy>=0){w.y=ny;let k=0;while(blocked(w.x,w.y)&&k++<6)w.y--;
-        if(resting(w.x,w.y)){if(w.vy>6.5)w.hp-=Math.round((w.vy-6.5)*10);sfx('hurt');w.vx=w.vy=0;w.air=false;break}}
+        // fall damage, except while everyone drops in at the start (before the first turn), so all start on 100
+        if(resting(w.x,w.y)){if(w.vy>6.5&&teams.some(t=>t.turns>0)){w.hp-=Math.round((w.vy-6.5)*10);sfx('hurt')}w.vx=w.vy=0;w.air=false;break}}
       else if(!blocked(w.x,ny))w.y=ny;else w.vy=0;
     }
   }else if(!resting(w.x,w.y)){w.air=true;w.vx=w.vy=0}

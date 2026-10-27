@@ -169,3 +169,13 @@ test('a random team starts each match, and it is the same on every client',()=>{
     assert.equal(s.size,n,`with ${n} teams only teams ${[...s.keys()]} ever started`);
     for(const [t,c] of s)assert.ok(c>300/n*0.5,`team ${t} started only ${c} of 300 matches`)}
 });
+
+test('every worm starts the first turn on 100 health, and a turn lasts 15 s',()=>{
+  for(const seed of [1,7,99,424242,3141592653]){
+    const g=createGame();g.startGame(['A','B','C','D','E','F'],seed);
+    while(g.phase!=='aim')g.update();
+    assert.deepEqual(g.worms.map(w=>w.hp),Array(12).fill(100),'seed '+seed);
+    const f=g.frame,p=g.cur;while(g.cur===p&&g.frame<f+2000)g.update(); // nobody moves: the timer runs out
+    assert.ok(g.frame-f>=900&&g.frame-f<900+200,'turn lasted '+(g.frame-f)+' frames');
+  }
+});
