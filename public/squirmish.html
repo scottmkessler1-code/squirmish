@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caterpillar Continental Combat</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef5f1;--fg:#16302b;--line:#c3d6cf;--accent:#1b7f6b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1c1a;--fg:#e3f1ec;--line:#2c4540;--accent:#3fcfb0;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1c1a;--fg:#e3f1ec;--line:#2c4540;--accent:#3fcfb0;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'Fredoka',system-ui,sans-serif}
+#wrap{max-width:1000px;margin:0 auto;padding:12px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+h1{font-size:26px;margin:0;font-weight:600}
+button{font:inherit;cursor:pointer}
+#again,#mute{background:none;border:2px solid var(--line);color:var(--fg);border-radius:10px;padding:4px 12px}
+#again:focus-visible,#mute:focus-visible,.n:focus-visible,#go:focus-visible,input:focus-visible{outline:3px solid #ffd166;outline-offset:2px}
+#stage{position:relative}
+canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e3}
+#menu{position:absolute;inset:0;background:rgba(10,24,22,.86);color:#fff;border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:auto}
+#menu.hide{display:none}
+.card{width:min(420px,92%);text-align:center;padding:14px 0}
+.card h2{font-size:30px;line-height:1.1;margin:0 0 2px;font-weight:600}
+.card p{margin:0 0 14px;opacity:.8}
+#counts{display:flex;gap:8px;justify-content:center;margin-bottom:12px}
+.n{width:44px;height:44px;border-radius:50%;border:2px solid #6fd3bd;background:none;color:#fff;font-size:18px}
+.n.on{background:#6fd3bd;color:#0d2a24}
+#names{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+#names label{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border-radius:10px;padding:6px 8px}
+#names i{width:14px;height:14px;border-radius:50%;flex:none}
+#names input{width:100%;min-width:0;background:none;border:0;color:#fff;font:inherit}
+#go{background:#ffd166;color:#2a1f00;border:0;border-radius:12px;padding:10px 28px;font-size:20px;font-weight:600}
+#who{margin:8px 2px 4px;font-weight:600;font-size:14px}
+#weapons{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-width:390px}
+.w{position:relative;background:none;border:2px solid var(--line);border-radius:10px;color:var(--fg);padding:5px 2px 3px;display:flex;flex-direction:column;align-items:center;gap:1px}
+.w small{font-size:10px;white-space:nowrap}
+.k{position:absolute;top:3px;left:3px;min-width:16px;height:16px;box-sizing:border-box;border:1.5px solid var(--fg);border-bottom-width:3px;border-radius:4px;font:600 11px/11px Fredoka,system-ui,sans-serif;text-align:center;padding:0 2px;background:var(--bg)}
+.w.on .k{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.w svg{width:100%;max-width:34px;height:auto}
+.w.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.w.empty{opacity:.4}
+.w .a{position:absolute;top:-7px;right:-4px;min-width:16px;height:16px;border-radius:8px;background:var(--accent);color:var(--bg);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.w:focus-visible{outline:3px solid #ffd166;outline-offset:2px}
+#help{margin:10px 2px 0;font-size:14px;opacity:.85;line-height:1.5}
+</style></head>
+<body><div id="wrap">
+<header><h1>Caterpillar Continental Combat</h1><span><button id="mute" aria-pressed="false">🔊 Sound</button> <button id="again">New game</button></span></header>
+<div id="stage"><canvas id="c" width="960" height="540"></canvas>
+<div id="menu"><div class="card"><h2>Caterpillar Continental Combat</h2><p>Pass-and-play prototype. Pick 2 to 6 players.</p>
+<div id="counts"></div><div id="names"></div><button id="go">Start game</button></div></div></div>
+<div id="who"></div><div id="weapons"></div>
+<div id="help">Left/Right walk · Up/Down aim · Enter jump · Keys 1–5 or click a weapon · hold Space to charge, release to fire (shotgun and dynamite fire instantly; airstrike lands farther with more charge). Walk over crates to restock ammo. Each player has two worms; last team standing wins.</div>
+</div>
+<script src="game.js"></script>
+<script>
+const {createGame,COLORS,GAMEKEYS,ORDER}=Squirmish;
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const game=createGame({document,ctx:g,sfx,debug:location.hash==='#debug'});
+const sendInput=(k,d)=>game.sendInput(k,d);
+let last=0,acc=0;
+function loop(t){acc+=Math.min(100,t-last);last=t;
+  while(acc>=1000/60){if(game.phase!=='menu')game.update();acc-=1000/60}
+  game.draw();renderWeapons();requestAnimationFrame(loop)}
+addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return;
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Enter'].includes(e.key))e.preventDefault();
+  initAudio();
+  if(e.repeat||!GAMEKEYS.includes(e.key))return;
+  sendInput(e.key,true);
+});
+addEventListener('keyup',e=>{if(GAMEKEYS.includes(e.key))sendInput(e.key,false)});
+addEventListener('blur',()=>{for(const k of GAMEKEYS)sendInput(k,false)});
+// sound (synthesized with WebAudio, no files)
+let ac=null,master=null,muted=false,noiseBuf=null;
+function initAudio(){
+  if(ac){if(ac.state==='suspended')ac.resume();return}
+  const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+  try{ac=new AC();master=ac.createGain();master.gain.value=muted?0:.5;master.connect(ac.destination);
+    noiseBuf=ac.createBuffer(1,ac.sampleRate*1.5,ac.sampleRate);const d=noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1}catch(e){ac=null}
+}
+function tone(f0,f1,dur,type,vol,delay){
+  if(!ac)return;const t=ac.currentTime+(delay||0),o=ac.createOscillator(),gn=ac.createGain();
+  o.type=type||'sine';o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
+  gn.gain.setValueAtTime(vol||.3,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(gn);gn.connect(master);o.start(t);o.stop(t+dur+.02);
+}
+function noise(dur,f0,f1,vol,type,q){
+  if(!ac)return;const t=ac.currentTime,s=ac.createBufferSource(),fl=ac.createBiquadFilter(),gn=ac.createGain();
+  s.buffer=noiseBuf;fl.type=type||'lowpass';fl.Q.value=q||1;fl.frequency.setValueAtTime(f0,t);fl.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
+  gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
+  s.connect(fl);fl.connect(gn);gn.connect(master);s.start(t,Math.random()*.5);s.stop(t+dur+.02);
+}
+function sfx(n,a){
+  if(!ac||muted)return;
+  switch(n){
+    case 'boom':noise(.5+a*.5,1800,60,.7,'lowpass');tone(110,30,.5+a*.3,'sine',.5);break;
+    case 'launch':noise(.45,500,2500,.35,'bandpass',2);break;
+    case 'shot':noise(.18,5000,400,.7,'lowpass');tone(150,50,.12,'square',.25);break;
+    case 'punch':tone(160,50,.14,'square',.35);noise(.1,1500,200,.4,'lowpass');break;
+    case 'plant':tone(300,200,.06,'square',.2);tone(220,160,.08,'square',.2,.07);break;
+    case 'whistle':tone(1800,500,.9,'sine',.12);break;
+    case 'jump':tone(300,600,.15,'sine',.25);break;
+    case 'step':tone(120+Math.random()*30,80,.05,'triangle',.12);break;
+    case 'hurt':tone(900,500,.12,'square',.12);tone(700,350,.12,'square',.12,.1);break;
+    case 'die':tone(500,80,.5,'sawtooth',.18);break;
+    case 'splash':noise(.5,3000,300,.5,'lowpass');break;
+    case 'pickup':[523,659,784,1046].forEach((f,i)=>tone(f,f,.12,'triangle',.22,i*.07));break;
+    case 'drop':noise(.4,2000,800,.12,'bandpass');break;
+    case 'turn':tone(660,660,.1,'sine',.2);tone(880,880,.15,'sine',.2,.1);break;
+    case 'tick':tone(1000,1000,.04,'square',.1);break;
+    case 'charge':tone(200+a*600,200+a*600,.05,'sawtooth',.07);break;
+    case 'win':[523,659,784,1046,784,1046].forEach((f,i)=>tone(f,f,.18,'triangle',.25,i*.14));break;
+  }
+}
+// weapon bar
+const NAMES=['Punch','Rocket','Cluster','Shotgun','Dynamite','Airstrike'];
+const ICONS=[
+'<rect x="9" y="8" width="22" height="16" rx="7" fill="#e63946"/><rect x="30" y="10" width="9" height="12" rx="2" fill="#f1faee" stroke="#555"/><path d="M15 9v7M21 9v7M27 9v7" stroke="#8d1f2a" stroke-width="1.5"/>',
+'<path d="M8 16L3 8h11zM8 16L3 24h11z" fill="#ff9f1c"/><path d="M8 16l8-6h18l10 6-10 6H16z" fill="#cfd8dc" stroke="#37474f"/><path d="M34 10l10 6-10 6z" fill="#ef476f"/>',
+'<circle cx="17" cy="17" r="10" fill="#8e5bd1" stroke="#3d2a63"/><path d="M17 7l3-4" stroke="#444"/><circle cx="35" cy="9" r="4" fill="#ff9f1c"/><circle cx="41" cy="20" r="4" fill="#ff9f1c"/><circle cx="32" cy="26" r="3.5" fill="#ff9f1c"/>',
+'<path d="M14 11H8L3 25h9l4-5z" fill="#8d5524"/><rect x="14" y="10" width="31" height="4" fill="#607d8b"/><rect x="14" y="15" width="31" height="4" fill="#455a64"/>',
+'<rect x="11" y="10" width="8" height="19" rx="2" fill="#d62839"/><rect x="20" y="10" width="8" height="19" rx="2" fill="#d62839"/><rect x="29" y="10" width="8" height="19" rx="2" fill="#d62839"/><rect x="10" y="17" width="28" height="4" fill="#f1faee"/><path d="M24 10q4-7 11-5" stroke="#444" fill="none"/><circle cx="35" cy="5" r="2.5" fill="#ffd166"/>',
+'<path d="M4 16L18 14L24 4H28L25 14L38 15L44 12V20L38 17L25 18L28 28H24L18 18Z" fill="#78909c" stroke="#37474f"/>'];
+const wbar=document.getElementById('weapons'),who=document.getElementById('who');let wkey='';
+wbar.innerHTML=ORDER.map((i,n)=>`<button class="w" data-i="${i}" aria-label="${NAMES[i]}"><kbd class="k">${n+1}</kbd><svg viewBox="0 0 48 32">${ICONS[i]}</svg><small>${NAMES[i]}</small><span class="a"></span></button>`).join('');
+wbar.onclick=e=>{const b=e.target.closest('.w');if(!b)return;const n=ORDER.indexOf(+b.dataset.i)+1;if(n>0){sendInput(String(n),true);sendInput(String(n),false)}};
+function renderWeapons(){
+  const w=game.active(),weapon=game.weapon,am=w?w.team.ammo:[],key=game.cur+'|'+weapon+'|'+am.join()+(w?w.team.name:'');
+  if(key===wkey)return;wkey=key;
+  who.textContent=w?w.team.name+'’s arsenal':'';
+  [...wbar.children].forEach(b=>{const i=+b.dataset.i;b.classList.toggle('on',i===weapon);b.classList.toggle('empty',i>0&&!!w&&am[i]<1);b.querySelector('.a').textContent=i?(w?am[i]:''):'\u221e'})}
+// menu
+let count=2;const names=['Player 1','Player 2','Player 3','Player 4','Player 5','Player 6'];
+const menu=document.getElementById('menu'),countsEl=document.getElementById('counts'),namesEl=document.getElementById('names');
+function renderMenu(){
+  countsEl.innerHTML=[2,3,4,5,6].map(n=>`<button class="n${n===count?' on':''}" data-n="${n}" aria-label="${n} players">${n}</button>`).join('');
+  namesEl.innerHTML=Array.from({length:count},(_,i)=>`<label><i style="background:${COLORS[i]}"></i><input data-i="${i}" value="${names[i]}" maxlength="12" aria-label="Player ${i+1} name"></label>`).join('');
+}
+countsEl.onclick=e=>{const n=e.target.dataset.n;if(n){count=+n;renderMenu()}};
+namesEl.oninput=e=>{names[e.target.dataset.i]=e.target.value||'Player'};
+document.getElementById('go').onclick=()=>{initAudio();menu.classList.add('hide');game.startGame(names.slice(0,count),Math.random()*4294967296>>>0)};
+document.getElementById('again').onclick=()=>{menu.classList.remove('hide');document.activeElement.blur()};
+const mb=document.getElementById('mute');
+mb.onclick=()=>{initAudio();muted=!muted;if(master)master.gain.value=muted?0:.5;mb.textContent=muted?'🔇 Muted':'🔊 Sound';mb.setAttribute('aria-pressed',muted);mb.blur()};
+renderMenu();game.preview(1);requestAnimationFrame(loop);
+</script></body></html>
