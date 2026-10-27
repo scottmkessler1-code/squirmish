@@ -1,6 +1,6 @@
 // Caterpillar Continental Combat page: online rooms (lobby, lockstep match, spectating) and offline hot-seat play.
 'use strict';
-const {createGame,COLORS,GAMEKEYS,ORDER}=Squirmish;
+const {createGame,COLORS,GAMEKEYS,ORDER,WORMS_PER_TEAM,TURN_SECONDS,worldWidth}=Squirmish;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch{}}};
@@ -115,14 +115,24 @@ async function showJoin(code){
 function showOffline(){
   setMode('home');
   showMenu(`<h2>Offline game</h2><p>Pass-and-play on one keyboard. Pick 2 to 6 players.</p>
-    <div id="counts"></div><div id="names"></div><button class="big" data-act="offgo">Start game</button>
+    <div id="counts"></div><div id="names"></div><div id="settings"></div><button class="big" data-act="offgo">Start game</button>
     <p><button class="link" data-act="home">Back</button></p>`);
   renderOffline();
 }
+// match settings picker (worms per team, turn length): buttons when you can change them, a summary otherwise
+function settingsHtml(st,editable,teams){
+  const map=worldWidth(teams*st.worms)/960,size=map>1?` · ${map%1?map.toFixed(1):map}× wide map`:'';
+  if(!editable)return `<p class="setsum">${st.worms} caterpillar${st.worms>1?'s':''} per team · ${st.turn} s turns${size}</p>`;
+  const row=(label,key,vals,unit)=>`<div class="setrow"><span>${label}</span><div class="seg" role="group" aria-label="${label}">${vals.map(v=>
+    `<button class="segb${v===st[key]?' on':''}" data-set="${key}" data-v="${v}" aria-pressed="${v===st[key]}">${v}${unit}</button>`).join('')}</div></div>`;
+  return row('Caterpillars per team','worms',WORMS_PER_TEAM,'')+row('Turn time','turn',TURN_SECONDS,' s')+`<p class="setsum">${teams} team${teams>1?'s':''} × ${st.worms}${size||' · normal map'}</p>`;
+}
+const offSettings={worms:2,turn:15};
 let offCount=2;const offNames=['Player 1','Player 2','Player 3','Player 4','Player 5','Player 6'];
 function renderOffline(){
   $('#counts').innerHTML=[2,3,4,5,6].map(n=>`<button class="n${n===offCount?' on':''}" data-n="${n}" aria-label="${n} players">${n}</button>`).join('');
   $('#names').innerHTML=Array.from({length:offCount},(_,i)=>`<label><i class="dot" style="background:${COLORS[i]}"></i><input data-i="${i}" value="${esc(offNames[i])}" maxlength="12" aria-label="Player ${i+1} name"></label>`).join('');
+  $('#settings').innerHTML=settingsHtml(offSettings,true,offCount);
 }
 
 // lobby: the top part is built once (so typing in the name box isn't interrupted), the rest re-renders on every update
@@ -130,13 +140,11 @@ function showLobby(){
   setMode('room');
   showMenu(`<h2>Room <span class="code">${esc(net.code)}</span></h2>
     <p>Invite friends with this link: <b>${esc(location.host)}/r/${esc(net.code)}</b></p>
-    <div class="row"><button class="ghost" data-act="copy">Copy invite link</button></div>
     <label class="field">Your name <input id="myname" maxlength="12" value="${esc(net.you?.name||myName())}"></label>
-    <ol id="seats"></ol><div id="specs"></div>
+    <ol id="seats"></ol><div id="specs"></div><div id="settings"></div>
     <div class="row"><button class="ghost" data-act="ready" id="readyBtn"></button><button class="ghost" data-act="role" id="roleBtn"></button></div>
     <div class="row"><button class="big" data-act="start" id="startBtn">Start match</button></div>
-    <p class="msg" id="msg"></p>
-    <button class="link" data-act="leave">Leave room</button>`);
+    <p class="msg" id="msg"></p>`); // copy link and leave are in the header
   renderLobby();
 }
 function renderLobby(){
@@ -149,6 +157,7 @@ function renderLobby(){
     return `<li class="${p.id===me.id?'me':''}"><i style="background:${COLORS[i]}"></i><span class="nm">${esc(p.name)}</span>`+
       `${p.id===me.id?'<span class="tag">you</span>':''}${p.id===L.host?'<span class="tag">host</span>':''}${st}</li>`;
   }).join('');
+  $('#settings').innerHTML=settingsHtml(L.settings||{worms:2,turn:15},amHost,Math.max(2,players.length));
   $('#specs').textContent=L.spectators.length?'Watching: '+L.spectators.map(s=>s.name+(s.id===me.id?' (you)':'')+(s.id===L.host?' (host)':'')).join(', '):'';
   const seated=me.role==='player',p=players.find(p=>p.id===me.id);
   const rb=$('#readyBtn');rb.hidden=!seated;rb.textContent=p?.ready?'Ready ✓':'I’m ready';rb.classList.toggle('on',!!p?.ready);
@@ -256,6 +265,10 @@ addEventListener('popstate',route);
 // ---------- clicks and typing in the menus ----------
 card.addEventListener('click',async e=>{
   const n=e.target.closest('[data-n]');if(n){offCount=+n.dataset.n;renderOffline();return}
+  const st=e.target.closest('[data-set]');
+  if(st){const k=st.dataset.set,v=+st.dataset.v;
+    if(mode==='room')send({t:'settings',[k]:v});else{offSettings[k]=v;renderOffline()}
+    return}
   const b=e.target.closest('[data-act]');if(!b)return;
   const nm=$('#nm');if(nm)saveName(nm.value);
   switch(b.dataset.act){
@@ -276,7 +289,7 @@ card.addEventListener('click',async e=>{
       openRoom(net.code,{spectate:b.dataset.act==='watch'});break;
     case 'home':history.pushState(null,'','/');route();break;
     case 'offline':showOffline();break;
-    case 'offgo':setMode('offline');menu.classList.add('hide');game.overHint='Press New game to play again';game.startGame(offNames.slice(0,offCount),Math.random()*4294967296>>>0);break;
+    case 'offgo':setMode('offline');menu.classList.add('hide');game.overHint='Press New game to play again';game.startGame(offNames.slice(0,offCount),Math.random()*4294967296>>>0,{...offSettings});break;
     case 'copy':copyLink(b);break;
     case 'ready':send({t:'ready',ready:!net.lobby.players.find(p=>p.id===net.you.id)?.ready});break;
     case 'role':send({t:'role',spectate:net.you.role==='player'});break;
@@ -314,6 +327,23 @@ addEventListener('click',()=>{if(!sp.hidden){sp.hidden=true;sb.setAttribute('ari
 addEventListener('keydown',e=>{if(e.key==='Escape'&&!sp.hidden){sp.hidden=true;sb.setAttribute('aria-expanded',false);sb.focus()}});
 renderSound();
 addEventListener('pointerdown',initAudio);
+
+// ---------- looking around wide maps: drag the game view, or click the minimap ----------
+const toView=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*960/r.width,(e.clientY-r.top)*540/r.height]};
+let drag=null;
+cv.addEventListener('pointerdown',e=>{
+  if(game.worldWidth<=960)return;
+  const [vx,vy]=toView(e),mx=game.minimapAt(vx,vy);
+  if(mx!==null){game.centerOn(mx);drag={mini:true};}else drag={x:vx};
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;const [vx,vy]=toView(e);
+  if(drag.mini){const mx=game.minimapAt(vx,Math.max(8,Math.min(38,vy)));if(mx!==null)game.centerOn(mx)}
+  else{game.pan(drag.x-vx);drag.x=vx}
+});
+for(const ev of ['pointerup','pointercancel'])cv.addEventListener(ev,()=>{drag=null});
+function updateCursor(){const wide=game.worldWidth>960;cv.style.cursor=wide?(drag?'grabbing':'grab'):'';cv.style.touchAction=wide?'pan-y':''}
 
 // ---------- keyboard ----------
 const held=new Set();
@@ -392,7 +422,7 @@ function loop(t){
   const dt=Math.min(250,t-last);last=t;
   if(mode==='offline'){acc+=Math.min(100,dt);while(acc>=1000/60){if(game.phase!=='menu')game.update();acc-=1000/60}}
   else if(mode==='match')stepOnline(dt,false);
-  game.draw();renderWeapons();renderNet();updateBanner();
+  game.draw();renderWeapons();renderNet();updateBanner();updateCursor();
   requestAnimationFrame(loop);
 }
 // hidden tabs get no animation frames (and throttled timers), so keep the simulation moving from a timer

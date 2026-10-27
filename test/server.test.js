@@ -162,3 +162,24 @@ test('room creation is rate limited per IP',async()=>{
   let last;for(let i=0;i<65;i++)last=await fetch(base+'/api/rooms',{method:'POST'});
   assert.equal(last.status,429);
 });
+
+test('match settings: host only, lobby only, validated, reset ready, sent with start and to late joiners',async()=>{
+  clock+=61_000; // the rate-limit test above used up this minute's room allowance
+  const code=await newRoom(),a=client(),b=client();
+  const wa=await a.join(code,'A');assert.deepEqual(wa.settings,{worms:2,turn:15});
+  await b.join(code,'B');
+  await b.send({t:'settings',worms:3});assert.equal((await b.next('error')).code,'not_host');
+  await a.send({t:'settings',worms:7});assert.equal((await a.next('error')).code,'bad_message');
+  await a.send({t:'settings',turn:13});assert.equal((await a.next('error')).code,'bad_message');
+  await b.send({t:'ready',ready:true});await a.send({t:'ready',ready:true});
+  await b.next('lobby',m=>m.players.every(p=>p.ready));
+  await a.send({t:'settings',worms:4,turn:30});
+  const l=await b.next('lobby',m=>m.settings.worms===4);
+  assert.deepEqual(l.settings,{worms:4,turn:30});assert.ok(l.players.every(p=>!p.ready),'ready flags kept after a change');
+  for(const x of [a,b])await x.send({t:'ready',ready:true});
+  await settle();await a.send({t:'start'});
+  assert.deepEqual((await b.next('start')).settings,{worms:4,turn:30});
+  await a.send({t:'settings',worms:1});assert.equal((await a.next('error')).code,'not_in_lobby');
+  const c=client(),wc=await c.join(code,'C');assert.deepEqual(wc.match.settings,{worms:4,turn:30});
+  for(const x of [a,b,c])x.close();
+});

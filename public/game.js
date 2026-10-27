@@ -3,7 +3,8 @@
 // Rule of thumb: anything that affects stateHash() must come from rng(), the input queue, or the d* math helpers below.
 (function(root){
 'use strict';
-const W=960,H=540,WATER=H-26,COLORS=['#ef476f','#ffd166','#06d6a0','#4cc9f0','#b388eb','#ff9f1c'];
+const VW=960,H=540,WATER=H-26, // VW: view (screen) width; the world can be wider
+  MAX_W=VW*4,COLORS=['#ef476f','#ffd166','#06d6a0','#4cc9f0','#b388eb','#ff9f1c'];
 const WEAPONS=[{n:'Punch'},{n:'Rocket',r:34,d:45},{n:'Cluster',r:24,d:30},{n:'Shotgun'},{n:'Dynamite',r:55,d:75},{n:'Airstrike',r:28,d:30},{n:'Bomblet',r:18,d:24}];
 const ROCKETY=t=>t===1||t===5;            // drawn as rockets, leave a smoke trail
 const IMPACT=t=>t===1||t===2||t===5;       // explode on hitting ground or a worm (the rest bounce until their fuse runs out)
@@ -34,6 +35,9 @@ const dhypot=(x,y)=>Math.sqrt(x*x+y*y);
 // mulberry32 as a standalone generator, for visual-only randomness that should still look the same for everyone
 function rngFrom(s){s|=0;return()=>{s=(s+0x6D2B79F5)|0;let t=Math.imul(s^(s>>>15),1|s);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 
+// map width for a match: the original 960 px for up to 6 worms, then 160 px more per worm, up to 4x
+const worldWidth=worms=>Math.min(MAX_W,Math.max(VW,Math.round(worms*160/8)*8));
+const WORMS_PER_TEAM=[1,2,3,4],TURN_SECONDS=[10,15,20,30,45,60];
 function createGame(env={}){
 let overHint=env.overHint||'Press New game to play again';
 const doc=env.document||null,g=env.ctx||null,sfx=env.sfx||(()=>{}),DEBUG=!!env.debug,INPUT_DELAY=env.inputDelay||0;
@@ -41,9 +45,15 @@ const dot=(x,y,r,c)=>{g.fillStyle=c;g.beginPath();g.arc(x,y,r,0,7);g.fill()};
 
 // terrain: `mask` (1 = solid) is the gameplay truth. The canvas `tc` is only its picture, because canvas
 // anti-aliasing differs between browsers and would desync collision if we read pixels back.
-const mask=new Uint8Array(W*H);let thash=0,tdirty=true;
+let W=VW,mask=new Uint8Array(W*H),thash=0,tdirty=true,tver=0;
 let tc=null,tg=null,bgc=null,bg=null;
 if(doc){tc=doc.createElement('canvas');tc.width=W;tc.height=H;tg=tc.getContext('2d');bgc=doc.createElement('canvas');bgc.width=W;bgc.height=H;bg=bgc.getContext('2d')}
+function setWorld(w){
+  if(w===W&&mask.length===W*H)return;
+  W=w;mask=new Uint8Array(W*H);tdirty=true;tver++;
+  if(tc){tc.width=W;bgc.width=W}
+  makeSkyLife();
+}
 const solid=(x,y)=>{x=Math.floor(x);y=Math.floor(y);return x>=0&&x<W&&y>=0&&y<H&&mask[y*W+x]===1};
 // worm body (drawn 1.5x the original size; the collision shape matches what you see): about 12 px wide, 19 px tall
 const blocked=(x,y)=>{for(const dx of[-6,0,6])for(const dy of[-3,-9,-14,-18])if(solid(x+dx,y+dy))return true;return false};
@@ -55,7 +65,7 @@ const resting=(x,y)=>ground(x,y)||blocked(x,y+1);
 function carve(cx,cy,r){
   const x0=Math.max(0,Math.floor(cx-r)),x1=Math.min(W-1,Math.ceil(cx+r)),y0=Math.max(0,Math.floor(cy-r)),y1=Math.min(H-1,Math.ceil(cy+r)),r2=r*r;
   for(let y=y0;y<=y1;y++){const dy=y+.5-cy;for(let x=x0;x<=x1;x++){const dx=x+.5-cx;if(dx*dx+dy*dy<=r2)mask[y*W+x]=0}}
-  tdirty=true;
+  tdirty=true;tver++;
 }
 function terrainHash(){if(tdirty){let h=0;for(let i=0;i<mask.length;i++)h=(Math.imul(h,31)+mask[i])|0;thash=h;tdirty=false}return thash}
 
@@ -63,7 +73,7 @@ let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapo
 // jumping: Enter hops forward; Enter again within BACKFLIP_WINDOW frames, while still rising, turns it into a backflip
 const JUMP_VX=1.96,JUMP_VY=-3.43,FLIP_VX=1.1,FLIP_VY=-5.2,BACKFLIP_WINDOW=18;
 const RETREAT=180; // frames the worm may keep walking after firing (3 s)
-const TURN_TIME=900; // frames per turn (15 s)
+let turnTime=900; // frames per turn; set per match (default 15 s)
 const keys={};
 // seeded RNG: all gameplay randomness uses rng() so every computer can build the same match from one seed
 let rs=1,curSeed=1;
@@ -108,7 +118,7 @@ function stateHash(){
   for(const w of worms){m(w.x);m(w.y);m(w.vx);m(w.vy);m(w.hp);m(w.dead?1:0);m(w.dir);m(w.air?1:0)}
   for(const p of projs){m(p.x);m(p.y);m(p.vx);m(p.vy);m(p.t);m(p.fuse)}
   for(const c of crates){m(c.x);m(c.y)}
-  teams.forEach(t=>{t.ammo.forEach(m);m(t.turns);m(t.weapon)});m(cur);m(timer);m(frame);
+  teams.forEach(t=>{t.ammo.forEach(m);m(t.turns);m(t.weapon)});m(cur);m(timer);m(frame);m(W);m(turnTime);
   m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(retreat);m(jumpF);m(wind);m(rs/1000);
   for(const k of GAMEKEYS)m(keys[k]?1:0);
   return h>>>0;
@@ -116,8 +126,12 @@ function stateHash(){
 
 const PAL=[{t:'#4aa8dc',b:'#e1f5f2',s:'#fff3b0',h1:'#9fd0c9',h2:'#6fb3a5',c:'#ffffff'},{t:'#5b4b9a',b:'#ffb26b',s:'#ffe29a',h1:'#b57a9a',h2:'#7d5a85',c:'#ffd8c2'},{t:'#0f2a4a',b:'#3b6fa0',s:'#f4f1de',h1:'#2d4f73',h2:'#1f3a5a',c:'#9ab4d0'}];
 let pal=PAL[0];
-const clouds=Array.from({length:6},()=>({x:Math.random()*W,y:30+Math.random()*130,s:.7+Math.random()*.9,v:.08+Math.random()*.2}));
-const birds=Array.from({length:4},()=>({x:Math.random()*W,y:50+Math.random()*120,v:.5+Math.random()*.5}));
+let clouds=[],birds=[];
+function makeSkyLife(){const n=W/VW;
+  clouds=Array.from({length:Math.round(6*n)},()=>({x:Math.random()*W,y:30+Math.random()*130,s:.7+Math.random()*.9,v:.08+Math.random()*.2}));
+  birds=Array.from({length:Math.round(4*n)},()=>({x:Math.random()*W,y:50+Math.random()*120,v:.5+Math.random()*.5}));
+}
+makeSkyLife();
 function makeBg(R){
   pal=PAL[Math.floor(R()*3)];
   const gr=bg.createLinearGradient(0,0,0,H);gr.addColorStop(0,pal.t);gr.addColorStop(.75,pal.b);bg.fillStyle=gr;bg.fillRect(0,0,W,H);
@@ -145,7 +159,7 @@ function genTerrain(){
   for(let x=0;x<W;x++)hs[x]=H*.5+dsin(x/140+p[0])*50+dsin(x/53+p[1])*24+dsin(x/23+p[2])*7;
   // solid from just above the surface line, where the painted grass edge sits
   for(let x=0;x<W;x++)for(let y=Math.max(0,Math.ceil(hs[x]-3));y<H;y++)mask[y*W+x]=1;
-  for(let i=0;i<8;i++){const x=rng()*W,y=hs[Math.floor(x)]+40+rng()*90,r=14+rng()*18;caves.push([x,y,r]);carve(x,y,r)}
+  for(let i=0;i<Math.round(8*W/VW);i++){const x=rng()*W,y=hs[Math.floor(x)]+40+rng()*90,r=14+rng()*18;caves.push([x,y,r]);carve(x,y,r)}
   tdirty=true;
   if(tg){paintTerrain(hs,caves,rngFrom(curSeed^0x5eed));makeBg(rngFrom(curSeed^0xb6))}
 }
@@ -155,19 +169,19 @@ function paintTerrain(hs,caves,R){
   const gr=tg.createLinearGradient(0,H*.4,0,H);gr.addColorStop(0,'#8c5b3b');gr.addColorStop(1,'#46302c');
   tg.fillStyle=gr;tg.beginPath();tg.moveTo(0,H);for(let x=0;x<W;x++)tg.lineTo(x,hs[x]);tg.lineTo(W,H);tg.fill();
   tg.globalCompositeOperation='source-atop';
-  for(let i=0;i<1400;i++){const x=R()*W,y=H*.35+R()*H*.65;tg.fillStyle=R()<.5?'rgba(40,22,14,.28)':'rgba(255,220,170,.14)';tg.beginPath();tg.arc(x,y,.8+R()*2.6,0,7);tg.fill()}
-  for(let i=0;i<45;i++){const x=R()*W,t=hs[Math.floor(x)],y=t+20+R()*(H-t-30);tg.fillStyle='#8f8a85';tg.strokeStyle='#5b5753';tg.lineWidth=1;tg.beginPath();tg.ellipse(x,y,5+R()*7,3+R()*4,R()*3,0,7);tg.fill();tg.stroke()}
+  for(let i=0;i<1400*W/VW;i++){const x=R()*W,y=H*.35+R()*H*.65;tg.fillStyle=R()<.5?'rgba(40,22,14,.28)':'rgba(255,220,170,.14)';tg.beginPath();tg.arc(x,y,.8+R()*2.6,0,7);tg.fill()}
+  for(let i=0;i<45*W/VW;i++){const x=R()*W,t=hs[Math.floor(x)],y=t+20+R()*(H-t-30);tg.fillStyle='#8f8a85';tg.strokeStyle='#5b5753';tg.lineWidth=1;tg.beginPath();tg.ellipse(x,y,5+R()*7,3+R()*4,R()*3,0,7);tg.fill();tg.stroke()}
   tg.globalCompositeOperation='source-over';
   tg.strokeStyle='#3f8f33';tg.lineWidth=9;tg.beginPath();tg.moveTo(0,hs[0]+1);for(let x=1;x<W;x++)tg.lineTo(x,hs[x]+1);tg.stroke();
   tg.strokeStyle='#6ccf55';tg.lineWidth=5;tg.beginPath();tg.moveTo(0,hs[0]);for(let x=1;x<W;x++)tg.lineTo(x,hs[x]);tg.stroke();
   for(let x=0;x<W;x+=2){tg.strokeStyle=R()<.5?'#7ddb5f':'#58b043';tg.lineWidth=1.3;tg.beginPath();tg.moveTo(x,hs[x]-1);tg.lineTo(x+(R()-.5)*3,hs[x]-1-R()*3);tg.stroke()}
-  for(let i=0;i<28;i++){const x=Math.floor(R()*W);tg.fillStyle=['#ff7aa2','#ffe066','#fff','#c77dff'][i%4];tg.beginPath();tg.arc(x,hs[x]-3.5,1.7,0,7);tg.fill()}
+  for(let i=0;i<28*W/VW;i++){const x=Math.floor(R()*W);tg.fillStyle=['#ff7aa2','#ffe066','#fff','#c77dff'][i%4];tg.beginPath();tg.arc(x,hs[x]-3.5,1.7,0,7);tg.fill()}
   tg.globalCompositeOperation='destination-out';
   for(const [x,y,r] of caves){tg.beginPath();tg.arc(x,y,r,0,7);tg.fill()}
   tg.globalCompositeOperation='source-over';
 }
 // terrain for the menu backdrop
-function preview(seed){setSeed(seed);genTerrain()}
+function preview(seed){setSeed(seed);setWorld(VW);genTerrain()}
 
 // ---- snapshots: the complete simulation state as plain JSON, for resyncing a client that diverged ----
 // JSON turns -0 into 0, so it travels as the string '-0' (it can matter: x*-0 and x*0 differ in sign)
@@ -179,7 +193,7 @@ const WORM_KEYS=['x','y','vx','vy','hp','dir','air','dead'],PROJ_KEYS=['x','y','
 function encodeMask(){const r=[];let v=0,n=0;for(let i=0;i<mask.length;i++){if(mask[i]!==v){r.push(n);v=mask[i];n=0}n++}r.push(n);return r}
 function decodeMask(r){let i=0,v=0;for(const n of r){mask.fill(v,i,i+n);i+=n;v^=1}if(i!==mask.length)throw new Error('bad terrain size');tdirty=true}
 function getSnapshot(){
-  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,jumpF,
+  return {v:1,W,turnTime,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,jumpF,
     winner:winner?teams.indexOf(winner):-1,keys:GAMEKEYS.filter(k=>keys[k]),
     teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo],weapon:t.weapon})),
     worms:worms.map(w=>({...pick(w,WORM_KEYS),team:teams.indexOf(w.team)})),
@@ -190,6 +204,7 @@ function getSnapshot(){
 // Replaces the whole simulation state. Queued inputs are dropped: the caller re-submits those after s.frame.
 function loadSnapshot(s){
   if(!s||s.v!==1)throw new Error('unknown snapshot version');
+  setWorld(s.W||VW);turnTime=s.turnTime||900;
   setSeed(s.seed);genTerrain(); // rebuilds the untouched landscape picture for this seed
   const pristine=tg?mask.slice():null;
   decodeMask(s.mask);
@@ -209,18 +224,22 @@ function loadSnapshot(s){
   inputQ.length=0;parts=[];rings=[];shake=0;toastT=0;
 }
 
-function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k in keys)keys[k]=false;
+// opts: {worms: per team (1-4), turn: seconds per turn}
+function startGame(names,seed,opts={}){
+  const per=WORMS_PER_TEAM.includes(opts.worms)?opts.worms:2;
+  turnTime=(TURN_SECONDS.includes(opts.turn)?opts.turn:15)*60;
+  setWorld(worldWidth(names.length*per));setSeed(seed);frame=0;inputQ.length=0;for(const k in keys)keys[k]=false;
   genTerrain();teams=[];worms=[];projs=[];parts=[];crates=[];cur=-1;winner=null;wind=(rng()<.5?-1:1)*(.15+rng()*.85);
   weapon=1;aim=.5;power=0;charging=false;
   // starting ammo: punch (unlimited), rocket, cluster, shotgun, dynamite, airstrike, bomblet (cluster fragments only)
   names.forEach((n,i)=>teams.push({name:n,color:COLORS[i],worms:[],turns:0,act:null,ammo:[99,15,2,5,2,1,0],weapon:1}));
-  const total=names.length*2,slots=shuffle([...Array(total).keys()]);
-  teams.forEach((t,ti)=>{for(let k=0;k<2;k++){
+  const total=names.length*per,slots=shuffle([...Array(total).keys()]);
+  teams.forEach((t,ti)=>{for(let k=0;k<per;k++){
     const s=slots.pop(),w={x:(s+.5)*W/total+(rng()-.5)*20,y:8,vx:0,vy:0,hp:100,team:t,dir:s<total/2?1:-1,air:true,dead:false};
     t.worms.push(w);worms.push(w);}});
   // a random team starts: nextTurn() after the drop-in moves on to the team after cur
   cur=(Math.floor(rng()*teams.length)+teams.length-1)%teams.length;
-  dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0;jumpF=-1; // let worms drop in first
+  for(let i=0;i<Math.round(2*W/VW);i++)dropCrate();phase='wait';settle=-60;waitT=0;retreat=0;jumpF=-1; // let worms drop in first
 }
 function nextTurn(){
   const alive=teams.filter(t=>t.worms.some(w=>!w.dead));
@@ -229,7 +248,7 @@ function nextTurn(){
   const t=teams[cur],al=t.worms.filter(w=>!w.dead);t.act=al[t.turns++%al.length];
   // start with this team's last weapon; if it's out of ammo, the first one that has some (punch never runs out)
   weapon=[t.weapon,1,2,3,4,5].find(i=>t.ammo[i]>0)??0;
-  if(crates.length<4&&rng()<.6)dropCrate();timer=TURN_TIME;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;jumpF=-1;
+  if(crates.length<Math.round(4*W/VW)&&rng()<.6)dropCrate();timer=turnTime;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;jumpF=-1;
 }
 const active=()=>teams[cur]&&teams[cur].act;
 
@@ -433,8 +452,46 @@ function drawDamage(){
   }
   g.globalAlpha=1;
 }
+// ---- camera (drawing only): follows the newest projectile, else the worm whose turn it is while aiming, else any
+// worm flying through the air; dragging the view takes over until the next shot or turn
+let camX=0,camT=0,camManual=null;
+const clampCam=x=>Math.max(0,Math.min(W-VW,x));
+function camKey(){return projs.length+':'+cur+':'+(teams[cur]?teams[cur].turns:0)+':'+curSeed}
+function updateCamera(){
+  if(W<=VW){camX=camT=0;return}
+  if(camManual!==null&&camManual!==camKey())camManual=null;
+  if(camManual===null){
+    let fx=null;const a=active();
+    if(projs.length)fx=projs[projs.length-1].x;
+    else if(phase==='aim'&&a&&!a.dead)fx=a.x;
+    else{const f=worms.find(w=>!w.dead&&w.air);if(f)fx=f.x}
+    if(fx!==null)camT=clampCam(fx-VW/2);
+  }
+  camX+=(camT-camX)*.15;if(Math.abs(camT-camX)<.5)camX=camT;
+}
+function pan(dx){if(W<=VW)return;camManual=camKey();camT=camX=clampCam(camX+dx)}
+function centerOn(x){if(W<=VW)return;camManual=camKey();camT=clampCam(x-VW/2)}
+// minimap on wide maps: terrain, worms, and the part you're looking at; click it to jump there
+const MM={x:VW/2-150,y:6,w:300,h:34};let mmCanvas=null,mmVer=-1;
+function drawMinimap(){
+  if(W<=VW||!doc)return;
+  if(!mmCanvas){mmCanvas=doc.createElement('canvas');mmCanvas.width=MM.w;mmCanvas.height=MM.h}
+  if(mmVer!==tver){mmVer=tver;const c=mmCanvas.getContext('2d'),img=c.createImageData(MM.w,MM.h),d=img.data;
+    for(let my=0;my<MM.h;my++)for(let mx=0;mx<MM.w;mx++){const x=Math.floor((mx+.5)*W/MM.w),y=Math.floor((my+.5)*H/MM.h);
+      if(mask[y*W+x]){const i=(my*MM.w+mx)*4;d[i]=140;d[i+1]=96;d[i+2]=62;d[i+3]=255}}
+    c.putImageData(img,0,0)}
+  g.shadowBlur=0;g.fillStyle='rgba(10,24,22,.45)';g.fillRect(MM.x-2,MM.y-2,MM.w+4,MM.h+4);
+  g.drawImage(mmCanvas,MM.x,MM.y);
+  g.fillStyle='rgba(70,170,210,.8)';g.fillRect(MM.x,MM.y+WATER*MM.h/H,MM.w,MM.h-WATER*MM.h/H);
+  for(const w of worms)if(!w.dead){dot(MM.x+w.x*MM.w/W,MM.y+Math.max(2,w.y*MM.h/H-2),2.6,'#111');dot(MM.x+w.x*MM.w/W,MM.y+Math.max(2,w.y*MM.h/H-2),2,w.team.color)}
+  for(const p of projs)dot(MM.x+p.x*MM.w/W,MM.y+Math.max(1,p.y*MM.h/H),1.6,'#fff');
+  g.strokeStyle='#fff';g.lineWidth=1.5;g.strokeRect(MM.x+camX*MM.w/W,MM.y-1,VW*MM.w/W,MM.h+2);
+}
+// view coordinates -> world x if the point is on the minimap
+function minimapAt(vx,vy){return W>VW&&vx>=MM.x&&vx<=MM.x+MM.w&&vy>=MM.y-2&&vy<=MM.y+MM.h+2?(vx-MM.x)*W/MM.w:null}
 function draw(){
   g.shadowBlur=0;g.save();if(shake>.3){g.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);shake*=.88}else shake=0;
+  updateCamera();g.translate(-Math.round(camX),0);
   g.drawImage(bgc,0,0);drawSky();g.drawImage(tc,0,0);
   const a=active();
   for(const c of crates){
@@ -475,38 +532,39 @@ function draw(){
   for(const q of rings){const l=tick-q.t0,r=q.max-(q.max-q.r0)*Math.pow(.75,l);g.strokeStyle='rgba(255,240,200,'+Math.max(0,.7-l/14)+')';g.lineWidth=4;g.beginPath();g.arc(q.x,q.y,r,0,7);g.stroke()}
   const wg=g.createLinearGradient(0,WATER-6,0,H);wg.addColorStop(0,'rgba(70,170,210,.85)');wg.addColorStop(1,'rgba(15,70,120,.95)');g.fillStyle=wg;g.beginPath();g.moveTo(0,H);
   const wy=x=>WATER+Math.sin(x/40+tick/25)*3+Math.sin(x/17-tick/18)*1.5;
-  for(let x=0;x<=W;x+=8)g.lineTo(x,wy(x));g.lineTo(W,H);g.fill();
-  g.strokeStyle='rgba(255,255,255,.6)';g.lineWidth=1.6;g.beginPath();for(let x=0;x<=W;x+=8)x?g.lineTo(x,wy(x)):g.moveTo(x,wy(x));g.stroke();
-  g.restore();hud(a);
+  const x0=Math.floor(camX/8)*8-8,x1=camX+VW+8;g.lineTo(x0,H);
+  for(let x=x0;x<=x1;x+=8)g.lineTo(x,wy(x));g.lineTo(x1,H);g.fill();
+  g.strokeStyle='rgba(255,255,255,.6)';g.lineWidth=1.6;g.beginPath();for(let x=x0;x<=x1;x+=8)x>x0?g.lineTo(x,wy(x)):g.moveTo(x,wy(x));g.stroke();
+  g.restore();hud(a);drawMinimap();
   if(DEBUG){g.shadowBlur=0;g.font='12px monospace';g.textAlign='left';g.fillStyle='#fff';g.fillRect(8,H-24,330,16);g.fillStyle='#000';g.fillText('seed '+curSeed+'  frame '+frame+'  hash '+stateHash().toString(16),12,H-12)}
 }
 function hud(a){g.shadowColor='rgba(0,0,0,.6)';g.shadowBlur=3;
   g.textAlign='left';g.font='600 18px Fredoka,system-ui,sans-serif';
   teams.forEach((t,i)=>{const hp=t.worms.reduce((s,w)=>s+Math.max(0,w.hp),0),y=38+i*16;
-    g.fillStyle='rgba(0,0,0,.35)';g.fillRect(10,y,110,10);g.fillStyle=t.color;g.fillRect(10,y,110*hp/200,10);
+    g.fillStyle='rgba(0,0,0,.35)';g.fillRect(10,y,110,10);g.fillStyle=t.color;g.fillRect(10,y,110*hp/(100*t.worms.length),10);
     g.font='600 12px Fredoka,sans-serif';g.fillStyle='#fff';g.fillText(t.name+(hp?'':' (out)'),126,y+9)});
   if(a&&phase!=='over'){
     g.font='600 18px Fredoka,sans-serif';g.fillStyle='#fff';
     g.fillText(a.team.name+'’s turn · '+WEAPONS[weapon].n,10,22);
-    g.textAlign='right';g.fillText(phase==='aim'?Math.ceil(timer/60)+'s':retreat>0?'Retreat! '+Math.ceil(retreat/60)+'s':'…',W-10,22);
-    g.font='600 12px Fredoka,sans-serif';g.fillText('wind',W-92,42);
-    g.fillStyle='rgba(0,0,0,.3)';g.fillRect(W-86,36,76,8);g.fillStyle='#fff';
-    g.fillRect(W-48+(wind<0?wind*38:0),36,Math.abs(wind)*38,8);
+    g.textAlign='right';g.fillText(phase==='aim'?Math.ceil(timer/60)+'s':retreat>0?'Retreat! '+Math.ceil(retreat/60)+'s':'…',VW-10,22);
+    g.font='600 12px Fredoka,sans-serif';g.fillText('wind',VW-92,42);
+    g.fillStyle='rgba(0,0,0,.3)';g.fillRect(VW-86,36,76,8);g.fillStyle='#fff';
+    g.fillRect(VW-48+(wind<0?wind*38:0),36,Math.abs(wind)*38,8);
   }
-  if(toastT>0){toastT--;g.font='600 15px Fredoka,system-ui,sans-serif';g.textAlign='center';const tw=g.measureText(toast).width+20;g.fillStyle='rgba(0,0,0,.6)';g.fillRect(W/2-tw/2,64,tw,26);g.fillStyle='#fff';g.fillText(toast,W/2,82)}
+  if(toastT>0){toastT--;g.font='600 15px Fredoka,system-ui,sans-serif';g.textAlign='center';const tw=g.measureText(toast).width+20;g.fillStyle='rgba(0,0,0,.6)';g.fillRect(VW/2-tw/2,64,tw,26);g.fillStyle='#fff';g.fillText(toast,VW/2,82)}
   if(phase==='over'){
-    g.fillStyle='rgba(0,0,0,.5)';g.fillRect(0,H/2-50,W,100);g.textAlign='center';g.fillStyle='#fff';
-    g.font='600 40px Fredoka,sans-serif';g.fillText(winner?winner.name+' wins!':'Draw!',W/2,H/2+8);
-    g.font='400 16px Fredoka,sans-serif';g.fillText(overHint,W/2,H/2+34);
+    g.fillStyle='rgba(0,0,0,.5)';g.fillRect(0,H/2-50,VW,100);g.textAlign='center';g.fillStyle='#fff';
+    g.font='600 40px Fredoka,sans-serif';g.fillText(winner?winner.name+' wins!':'Draw!',VW/2,H/2+8);
+    g.font='400 16px Fredoka,sans-serif';g.fillText(overHint,VW/2,H/2+34);
   }
 }
 
-return {startGame,update,stateHash,submitInput,sendInput,applyInput,preview,draw,active,getSnapshot,loadSnapshot,
+return {pan,centerOn,minimapAt,startGame,update,stateHash,submitInput,sendInput,applyInput,preview,draw,active,getSnapshot,loadSnapshot,
   get frame(){return frame},get tick(){return tick},get phase(){return phase},get cur(){return cur},get teams(){return teams},
   get worms(){return worms},get weapon(){return weapon},get winner(){return winner},get seed(){return curSeed},get terrainHash(){return terrainHash()},
-  set overHint(v){overHint=v},get terrainCanvas(){return tc}};
+  set overHint(v){overHint=v},get worldWidth(){return W},get camX(){return camX},get terrainCanvas(){return tc}};
 }
 
-const api={createGame,W,H,COLORS,WEAPONS,GAMEKEYS,ORDER,dsin,dcos,datan2,dhypot};
+const api={createGame,W:VW,VW,H,worldWidth,WORMS_PER_TEAM,TURN_SECONDS,COLORS,WEAPONS,GAMEKEYS,ORDER,dsin,dcos,datan2,dhypot};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.Squirmish=api;
 })(this);

@@ -241,3 +241,35 @@ test('jump: a snapshot taken mid-jump continues identically',()=>{
   for(const d of [8]){b.submitInput({f:f+d,p,k:'Enter',d:true});b.submitInput({f:f+d+1,p,k:'Enter',d:false})}
   for(let i=0;i<200;i++){a.update();b.update();assert.equal(b.stateHash(),a.stateHash(),'frame '+a.frame)}
 });
+
+// ---- match settings and map size
+const {worldWidth}=require('../public/game.js');
+test('map width grows with the number of worms: 960 up to 6, +160 each after, at most 4x',()=>{
+  assert.deepEqual([2,4,6,7,8,12,24,48].map(worldWidth),[960,960,960,1120,1280,1920,3840,3840]);
+});
+test('settings: worms per team, turn length and map width',()=>{
+  for(const [teams,worms,turn] of [[2,1,10],[2,4,60],[6,4,20],[3,3,45]]){
+    const g=createGame();g.startGame(Array.from({length:teams},(_,i)=>'T'+i),11,{worms,turn});
+    assert.equal(g.worms.length,teams*worms);assert.ok(g.teams.every(t=>t.worms.length===worms));
+    assert.equal(g.worldWidth,worldWidth(teams*worms));
+    assert.ok(g.worms.every(w=>w.x>0&&w.x<g.worldWidth));
+    while(g.phase!=='aim')g.update();
+    assert.ok(g.worms.every(w=>w.hp===100));
+    const f=g.frame,p=g.cur;while(g.cur===p&&g.frame<f+5000)g.update();
+    assert.ok(g.frame-f>=turn*60&&g.frame-f<turn*60+200,`${turn} s turn lasted ${g.frame-f} frames`);
+  }
+  const d=createGame();d.startGame(['A','B'],1,{worms:9,turn:7}); // bad values fall back to the defaults
+  assert.equal(d.worms.length,4);
+});
+test('a wide 6x4 match replays identically, and its snapshots continue identically',()=>{
+  const names=['A','B','C','D','E','F'],settings={worms:4,turn:20},r=record(77,names,30000,settings);
+  assert.ok(r.summary.turns>=10);
+  const p=replay(77,names,r.script,r.frames,{settings,incremental:true});
+  assert.equal(firstDiff(r.trace,p.trace),-1);
+  const a=createGame();a.startGame(names,77,settings);[...r.script].sort((x,y)=>x.f-y.f).forEach(e=>a.submitInput({...e}));
+  while(a.frame<4000)a.update();
+  const b=createGame();b.loadSnapshot(JSON.parse(JSON.stringify(a.getSnapshot())));
+  assert.equal(b.worldWidth,3840);
+  r.script.filter(e=>e.f>4000).sort((x,y)=>x.f-y.f).forEach(e=>b.submitInput({...e}));
+  for(let i=0;i<3000;i++){a.update();b.update();if(i%30===0)assert.equal(b.stateHash(),a.stateHash(),'frame '+a.frame)}
+});

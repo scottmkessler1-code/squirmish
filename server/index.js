@@ -69,6 +69,7 @@ function createServer({now=Date.now,maxRooms,fps,forfeitMs,createPerMin=CREATE_P
         case 'ready':err=room.setReady(me,msg.ready);break;
         case 'name':err=room.setName(me,msg.name);break;
         case 'role':err=room.setRole(me,msg.spectate);break;
+        case 'settings':err=room.setSettings(me,msg);break;
         case 'start':err=room.start(me,t);break;
         case 'input':err=room.input(me,msg);break;
         case 'ack':room.ack(me,msg.frame);break;

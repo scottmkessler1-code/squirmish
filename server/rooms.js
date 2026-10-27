@@ -1,7 +1,7 @@
 // Rooms and lobby: membership, seats, readiness, host, match start and the return to the lobby.
 // Socket-agnostic: each member carries a send(msg) function, and the clock is injected so tests can fast-forward time.
 const crypto=require('crypto');
-const {GAMEKEYS}=require('../public/game.js');
+const {GAMEKEYS,WORMS_PER_TEAM,TURN_SECONDS}=require('../public/game.js');
 
 const CODE_ALPHABET='ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
 const CODE_LEN=5,MAX_PLAYERS=6,MAX_SPECTATORS=20,MIN_PLAYERS=2,NAME_MAX=12;
@@ -32,7 +32,7 @@ function cleanName(n){
 class Room{
   constructor(code,now,{fps=FPS,forfeitMs=FORFEIT_MS}={}){
     this.code=code;this.fps=fps;this.forfeitMs=forfeitMs;this.members=new Map(); // token -> member
-    this.state='lobby';this.hostId=null;this.match=null;this.emptySince=now;this.returnAt=0;this.nextId=1;
+    this.state='lobby';this.hostId=null;this.match=null;this.settings={worms:2,turn:15};this.emptySince=now;this.returnAt=0;this.nextId=1;
   }
   get list(){return [...this.members.values()]}
   get players(){return this.list.filter(m=>m.role==='player').sort((a,b)=>a.slot-b.slot)}
@@ -42,7 +42,7 @@ class Room{
 
   view(){
     const pub=m=>({id:m.id,name:m.name,connected:m.connected});
-    return {state:this.state,host:this.hostId,
+    return {state:this.state,host:this.hostId,settings:this.settings,
       players:this.players.map(m=>({...pub(m),slot:m.slot,ready:m.ready})),
       spectators:this.spectators.map(pub)};
   }
@@ -79,7 +79,7 @@ class Room{
       seatWanted:!spectate&&m.role==='spectator'}; // asked to play but the room was full or mid-match
     if(this.match){const c=this.match.clock; // late joiners fast-forward from frame 0 using the full input log
       const cp=this.match.sync.checkpoint,from=cp?cp.frame:0; // start from the latest checkpoint when there is one
-      welcome.match={seed:this.match.seed,names:this.match.names,startFrame:0,snapshot:cp?cp.data:undefined,
+      welcome.match={seed:this.match.seed,names:this.match.names,settings:this.match.settings,startFrame:0,snapshot:cp?cp.data:undefined,
         inputs:c.log.filter(e=>e.f>from&&e.f<=c.sentUpTo),upTo:c.sentUpTo,done:!!this.match.done,e:this.match.sync.epoch.get(m.id)||0}}
     m.send(welcome);
     this.broadcastLobby();
@@ -109,6 +109,17 @@ class Room{
     if(next)this.broadcast({t:'host',id:next.id,slot:next.slot});
   }
 
+  // host only, in the lobby: worms per team and turn length. Everyone's ready flag resets so nobody starts on settings they didn't see.
+  setSettings(m,{worms,turn}){
+    if(m.id!==this.hostId)return 'not_host';
+    if(this.state!=='lobby')return 'not_in_lobby';
+    if(worms!==undefined&&!WORMS_PER_TEAM.includes(worms))return 'bad_message';
+    if(turn!==undefined&&!TURN_SECONDS.includes(turn))return 'bad_message';
+    const next={worms:worms??this.settings.worms,turn:turn??this.settings.turn};
+    if(next.worms===this.settings.worms&&next.turn===this.settings.turn)return;
+    this.settings=next;for(const p of this.players)p.ready=false;
+    this.broadcastLobby();
+  }
   setReady(m,ready){if(this.state!=='lobby'||m.role!=='player')return 'not_in_lobby';m.ready=!!ready;this.broadcastLobby()}
   setName(m,name){if(this.state!=='lobby')return 'not_in_lobby';m.name=this.uniqueName(cleanName(name),m);m.send({t:'you',you:this.you(m)});this.broadcastLobby()}
   setRole(m,spectate){
@@ -126,11 +137,11 @@ class Room{
     if(!ps.every(p=>p.ready&&p.connected))return 'not_ready';
     this.pack();
     this.state='playing';
-    this.match={seed,names:ps.map(p=>p.name),teamOf:new Map(ps.map(p=>[p.id,p.slot])),left:new Set(),over:new Map(),startedAt:now,
+    this.match={seed,settings:{...this.settings},names:ps.map(p=>p.name),teamOf:new Map(ps.map(p=>[p.id,p.slot])),left:new Set(),over:new Map(),startedAt:now,
       clock:{frame:0,acc:0,last:now,sentUpTo:0,pending:[],log:[],acks:new Map(),synced:new Set(),stalled:null,stallSince:0},
       // reports: frame -> {at, hs: id -> hash}; agreed: frame -> hash; epoch: id -> snapshots sent to that member
       sync:{reports:new Map(),agreed:new Map(),epoch:new Map(),resync:null,checkpoint:null,resyncs:0}};
-    for(const x of this.list)if(x.connected)x.send({t:'start',seed,names:this.match.names,startFrame:0,you:this.you(x)});
+    for(const x of this.list)if(x.connected)x.send({t:'start',seed,names:this.match.names,settings:this.match.settings,startFrame:0,you:this.you(x)});
     this.broadcastLobby();
   }
   // players report the end of the match; a majority of connected players agreeing on the result ends it,

@@ -9,8 +9,8 @@ function createLockstep({game,send,now=()=>Date.now(),onFrame=null,onDesync=null
   // epoch: snapshots loaded so far, sent with each hash so the server can ignore hashes from before the last one
   let upTo=0,started=false,myTeam=-1,reported=false,lastAck=-1,lastAckAt=-Infinity,waiting=[],epoch=0,resyncing=false,resyncs=0;
 
-  function begin({seed,names,snapshot,inputs=[],upTo:u=0,e=0},team){
-    game.startGame(names,seed);
+  function begin({seed,names,settings,snapshot,inputs=[],upTo:u=0,e=0},team){
+    game.startGame(names,seed,settings||{});
     if(snapshot)game.loadSnapshot(snapshot); // join from the server's latest checkpoint rather than frame 0
     for(const x of inputs)game.submitInput({...x});
     upTo=u;started=true;myTeam=team;reported=game.phase==='over';lastAck=-1;lastAckAt=-Infinity;waiting=[];epoch=e;resyncing=false;

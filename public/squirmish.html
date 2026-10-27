@@ -53,6 +53,11 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 #seats .st{font-size:13px;white-space:nowrap}
 #seats .st.rdy{color:#7ee2b8}
 #specs{font-size:14px;opacity:.85;margin:0 0 12px;min-height:1.2em}
+.setrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;flex-wrap:wrap;text-align:left;font-size:15px}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.segb{min-width:38px;height:34px;padding:0 8px;border-radius:9px;border:2px solid #6fd3bd;background:none;color:#fff;font-size:15px}
+.segb.on{background:#6fd3bd;color:#0d2a24}
+.setsum{font-size:14px;opacity:.8;margin:0 0 12px!important}
 #counts{display:flex;gap:8px;justify-content:center;margin-bottom:12px}
 .n{width:44px;height:44px;border-radius:50%;border:2px solid #6fd3bd;background:none;color:#fff;font-size:18px}
 .n.on{background:#6fd3bd;color:#0d2a24}
@@ -93,7 +98,7 @@ canvas{width:100%;height:auto;display:block;border-radius:14px;background:#7cc8e
 <div id="menu"><div class="card" id="card"></div></div></div>
 <div id="me" hidden></div>
 <div id="who"></div><div id="weapons"></div>
-<div id="help">Left/Right walk · Up/Down aim · Enter jump, press it again quickly for a backflip · Keys 1–6 or click a weapon · hold Space to charge, release to fire (shotgun and punch fire instantly; tap Space to drop dynamite at your feet or charge to throw it; cluster bursts on impact into bomblets; airstrike lands farther with more charge). After firing you have 3 seconds to walk or jump away. Walk over crates to restock ammo. Each team has two caterpillars; last team standing wins.</div>
+<div id="help">Left/Right walk · Up/Down aim · Enter jump, press it again quickly for a backflip · Keys 1–6 or click a weapon · hold Space to charge, release to fire (shotgun and punch fire instantly; tap Space to drop dynamite at your feet or charge to throw it; cluster bursts on impact into bomblets; airstrike lands farther with more charge). After firing you have 3 seconds to walk or jump away. Walk over crates to restock ammo. Last team standing wins. On bigger maps, drag the view or click the map strip at the top to look around.</div>
 </div>
 <script src="/game.js"></script>
 <script src="/lockstep.js"></script>

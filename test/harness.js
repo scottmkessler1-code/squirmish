@@ -7,12 +7,12 @@ const TRACE_EVERY=60;
 // Plays a whole match with a seeded bot and returns the recorded input script and the hash trace.
 // The bot reads game state to decide, but only ever talks to the game through submitInput,
 // so the script alone is enough to reproduce the match.
-function record(seed,names,maxFrames=40000){
+function record(seed,names,maxFrames=40000,opts={}){
   const g=createGame(),R=mulberry(seed^0x2545F491),script=[],trace=[];
   const at=(f,p,k,d)=>{const ev={f,p,k,d};script.push(ev);g.submitInput(ev)};
   const tap=(f,p,k)=>{at(f,p,k,true);at(f+1,p,k,false)};
   const hold=(f,p,k,n)=>{at(f,p,k,true);at(f+n,p,k,false);return f+n+1};
-  g.startGame(names,seed);
+  g.startGame(names,seed,opts);
   let turnKey='',over=0;
   while(g.frame<maxFrames&&over<200){
     if(g.phase==='aim'){
@@ -39,10 +39,10 @@ function record(seed,names,maxFrames=40000){
 }
 
 // Builds a fresh game, feeds it the script, and runs the same number of frames.
-function replay(seed,names,script,frames,opts={}){
+function replay(seed,names,script,frames,opts={}){ // opts: {incremental, settings}
   const g=createGame(),trace=[];
   script=[...script].sort((a,b)=>a.f-b.f); // stable, so same-frame events keep their order
-  g.startGame(names,seed);
+  g.startGame(names,seed,opts.settings||{});
   // incremental: deliver events in small batches a few frames ahead, the way server step messages will
   let next=0;const lead=opts.incremental?6:Infinity;
   const feed=()=>{while(next<script.length&&script[next].f<=g.frame+lead)g.submitInput({...script[next++]})};

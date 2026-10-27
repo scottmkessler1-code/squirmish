@@ -21,6 +21,7 @@ Client → server
 | `join {room, name, token?, spectate?}` | must be first. `token` reclaims a seat (60 s grace in the lobby). |
 | `ready {ready}` | players, lobby only |
 | `name {name}` / `role {spectate}` | lobby only; taking a seat needs a free one |
+| `settings {worms?, turn?}` | host only, lobby only: worms per team 1–4, turn 10/15/20/30/45/60 s; resets everyone's ready |
 | `start {}` | host only, ≥2 players, all connected and ready |
 | `over {frame, winner}` | players report the end; a majority of connected players must agree |
 | `leave {}` | gone at once, no grace |
@@ -32,8 +33,8 @@ Client → server
 | `resync {}` | the client knows it diverged (at most once per 5 s) |
 
 Server → client: `welcome {you, token, code, state, host, players, spectators, seatWanted, match?}`,
-`lobby {state, host, players:[{id, slot, name, ready, connected}], spectators:[{id, name, connected}]}`,
-`you {you}`, `start {seed, names, startFrame, you}`, `host {id, slot}`, `player_left {slot, id, reason: 'left'|'timeout'}`,
+`lobby {state, host, settings:{worms, turn}, players:[{id, slot, name, ready, connected}], spectators:[{id, name, connected}]}`,
+`you {you}`, `start {seed, names, settings, startFrame, you}`, `host {id, slot}`, `player_left {slot, id, reason: 'left'|'timeout'}`,
 `match_over {winner, name, backInMs}`, `replaced`, `error {code}`, `pong {c}`,
 `step {upTo, inputs:[{f, p, k, d}]}`, `stall {waiting:[id]}` (empty list = running again),
 `desync {frame}`, `snapshot_req {}`, `snapshot {data, inputs, upTo, e}`.
@@ -80,3 +81,8 @@ landscape picture from the seed and erases the craters.
 
 ## Deploying
 See [DEPLOY.md](DEPLOY.md): Render blueprint (`render.yaml`), `fly.toml`, and a `Dockerfile` for Railway or anything else.
+
+## Map size
+The map is 960 px wide for up to 6 worms in total, then 160 px wider per extra worm, up to 3840 px (`worldWidth()` in
+`public/game.js`); height stays 540. Caves, crates and decoration scale with the width. On wide maps the camera follows the
+newest projectile, else the worm whose turn it is, else anything flying; players can drag the view or click the minimap.

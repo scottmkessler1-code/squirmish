@@ -35,6 +35,10 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await A.waitForFunction(()=>document.querySelectorAll('#seats li:not(.empty)').length===2&&/Cy/.test(document.querySelector('#specs').textContent));
     assert.equal(await A.isDisabled('#startBtn'),true,'start enabled before anyone is ready');
     assert.equal(await B.isVisible('#startBtn'),false,'non-host sees start');
+    // host picks 4 caterpillars per team and 20 s turns; the guest sees it, and it widens the map
+    assert.equal(await B.$$eval('[data-set]',l=>l.length),0,'guest can change settings');
+    await A.click('[data-set=worms][data-v="4"]');await A.click('[data-set=turn][data-v="20"]');
+    await B.waitForFunction(()=>/4 caterpillars per team · 20 s turns · 1.3× wide map/.test(document.querySelector('#settings').textContent));
     await A.click('#readyBtn');await B.click('#readyBtn');
     await A.waitForFunction(()=>!document.querySelector('#startBtn').disabled);
     await shot(A,'1-lobby');
@@ -45,6 +49,17 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     assert.match(await B.textContent('#me'),/You are team 2, Bo \(yellow\)/);
     assert.match(await C.textContent('#me'),/watching/);
     assert.equal(await A.isVisible('#again'),false,'hot-seat New game shown online');
+    for(const p of [A,B,C])assert.deepEqual(await p.evaluate(()=>[__sq.game.worldWidth,__sq.game.worms.length]),[1280,8]);
+    // drag the view, then click the far end of the minimap
+    await A.waitForFunction(()=>__sq.game.phase==='aim');
+    const cam0=await A.evaluate(()=>__sq.game.camX),box=await A.$eval('#c',c=>{const r=c.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width}});
+    const startX=cam0>100?box.x+150:box.x+box.w-150;
+    await A.mouse.move(startX,box.y+300);await A.mouse.down();await A.mouse.move(startX+(cam0>100?200:-200),box.y+300,{steps:5});await A.mouse.up();
+    const cam1=await A.evaluate(()=>__sq.game.camX);assert.ok(Math.abs(cam1-cam0)>150,`drag moved the view ${cam0} -> ${cam1}`);
+    const s=box.w/960;await A.mouse.click(box.x+(cam1>100?331:629)*s,box.y+22*s);
+    await A.waitForFunction(c=>Math.abs(__sq.game.camX-c)>200,cam1);
+    await shot(A,'0-wide-map');
+    console.log('wide map: 1280 px, drag and minimap move the view');
     // let the worms drop, then whoever's turn it is walks and fires; the other sees "Waiting for"
     const turnPage=async()=>{for(;;){for(const p of [A,B]){const mine=await p.evaluate(()=>__sq.game.phase==='aim'&&__sq.game.cur===__sq.ls.myTeam);if(mine)return p}await sleep(100)}};
     for(let turn=0;turn<3;turn++){
