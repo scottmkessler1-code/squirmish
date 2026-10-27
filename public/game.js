@@ -6,8 +6,8 @@
 const W=960,H=540,WATER=H-26,COLORS=['#ef476f','#ffd166','#06d6a0','#4cc9f0','#b388eb','#ff9f1c'];
 const WEAPONS=[{n:'Punch'},{n:'Rocket',r:34,d:45},{n:'Cluster',r:0,d:0},{n:'Shotgun'},{n:'Dynamite',r:55,d:75},{n:'Airstrike',r:28,d:30},{n:'Bomblet',r:16,d:18}];
 const ROCKETY=t=>t===1||t===5;
-const GAMEKEYS=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Enter','1','2','3','4','5'];
-const ORDER=[1,2,3,4,5];
+const GAMEKEYS=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Enter','1','2','3','4','5','6'];
+const ORDER=[1,2,3,4,5,0]; // weapon for keys 1..6; Punch (0) has unlimited ammo
 const PHASES=['menu','wait','aim','over'];
 
 // deterministic math: built only from + - * / and Math.sqrt/round, which IEEE 754 pins down exactly,
@@ -34,6 +34,7 @@ const dhypot=(x,y)=>Math.sqrt(x*x+y*y);
 function rngFrom(s){s|=0;return()=>{s=(s+0x6D2B79F5)|0;let t=Math.imul(s^(s>>>15),1|s);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296}}
 
 function createGame(env={}){
+let overHint=env.overHint||'Press New game to play again';
 const doc=env.document||null,g=env.ctx||null,sfx=env.sfx||(()=>{}),DEBUG=!!env.debug,INPUT_DELAY=env.inputDelay||0;
 const dot=(x,y,r,c)=>{g.fillStyle=c;g.beginPath();g.arc(x,y,r,0,7);g.fill()};
 
@@ -71,7 +72,7 @@ function applyInput(ev){
   if(!ev.d){keys[k]=false;if(k===' '&&charging&&phase==='aim')fire();return}
   keys[k]=true;
   if(phase!=='aim'||!w)return;
-  if(k.length===1&&k>='1'&&k<='5'){if(!charging)weapon=ORDER[+k-1]}
+  if(k.length===1&&k>='1'&&k<='6'){if(!charging)weapon=ORDER[+k-1]}
   else if(k==='Enter'){if(!w.air&&!charging){w.air=true;w.vy=-2.8;w.vx=w.dir*1.6;w.y-=1;sfx('jump')}}
   else if(k===' '){if(!charging&&(weapon===0||w.team.ammo[weapon]>0)){if(weapon<1||weapon===3||weapon===4)fire();else{charging=true;power=0}}}
 }
@@ -340,13 +341,14 @@ function hud(a){g.shadowColor='rgba(0,0,0,.6)';g.shadowBlur=3;
   if(phase==='over'){
     g.fillStyle='rgba(0,0,0,.5)';g.fillRect(0,H/2-50,W,100);g.textAlign='center';g.fillStyle='#fff';
     g.font='600 40px Fredoka,sans-serif';g.fillText(winner?winner.name+' wins!':'Draw!',W/2,H/2+8);
-    g.font='400 16px Fredoka,sans-serif';g.fillText('Press New game to play again',W/2,H/2+34);
+    g.font='400 16px Fredoka,sans-serif';g.fillText(overHint,W/2,H/2+34);
   }
 }
 
 return {startGame,update,stateHash,submitInput,sendInput,applyInput,preview,draw,active,
   get frame(){return frame},get tick(){return tick},get phase(){return phase},get cur(){return cur},get teams(){return teams},
-  get worms(){return worms},get weapon(){return weapon},get winner(){return winner},get seed(){return curSeed},get terrainHash(){return terrainHash()}};
+  get worms(){return worms},get weapon(){return weapon},get winner(){return winner},get seed(){return curSeed},get terrainHash(){return terrainHash()},
+  set overHint(v){overHint=v}};
 }
 
 const api={createGame,W,H,COLORS,WEAPONS,GAMEKEYS,ORDER,dsin,dcos,datan2,dhypot};

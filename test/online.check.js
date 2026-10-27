@@ -1,0 +1,88 @@
+// End-to-end browser check (Playwright + Chromium): three separate browser profiles play through the real server.
+// Create a room, join by link, watch, ready, start, take turns, stay in sync, stall overlay, reload-rejoin, leave.
+// Run: npm run check:online   (screenshots go to ./screens/)
+const {chromium}=require('playwright'),assert=require('assert/strict'),fs=require('fs'),path=require('path');
+const {createServer}=require('../server');
+const SHOTS=path.join(__dirname,'..','screens');fs.mkdirSync(SHOTS,{recursive:true});
+const shot=(p,n)=>p.screenshot({path:path.join(SHOTS,n+'.png')});
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+(async()=>{
+  const srv=createServer();await new Promise(r=>srv.server.listen(0,r));
+  const base='http://localhost:'+srv.server.address().port,browser=await chromium.launch(),errors=[];
+  const open=async(name)=>{const ctx=await browser.newContext({viewport:{width:1100,height:900}}),p=await ctx.newPage();
+    p.on('pageerror',e=>errors.push(name+': '+e.message));p.on('console',m=>m.type()==='error'&&errors.push(name+': '+m.text()));return p};
+  // records stateHash every 60 frames in a page, so pages can be compared at the same frames
+  const record=p=>p.evaluate(()=>{const g=__sq.game,u=g.update;window.__hist={};g.update=()=>{u();if(g.frame%60===0)__hist[g.frame]=g.stateHash()}});
+  const compare=async(pages,label)=>{
+    const hs=await Promise.all(pages.map(p=>p.evaluate(()=>__hist)));
+    const common=Object.keys(hs[0]).filter(f=>hs.every(h=>f in h));
+    assert.ok(common.length>=3,label+': too few common frames ('+common.length+')');
+    for(const f of common)assert.ok(hs.every(h=>h[f]===hs[0][f]),`${label}: desync at frame ${f}`);
+    console.log(`${label}: ${pages.length} pages agree on ${common.length} sampled frames`);
+  };
+  try{
+    // host creates a room
+    const A=await open('A');await A.goto(base+'/#debug');
+    await A.fill('#nm','Ann');await A.click('[data-act=create]');
+    await A.waitForSelector('#seats li.me');
+    const code=A.url().match(/\/r\/(\w{5})/)[1];console.log('room',code);
+    // a friend opens the invite link, another just watches
+    const B=await open('B');await B.goto(base+'/r/'+code+'#debug');
+    await B.waitForSelector('#nm');await B.fill('#nm','Bo');await B.click('[data-act=join]');
+    const C=await open('C');await C.goto(base+'/r/'+code+'#debug');
+    await C.fill('#nm','Cy');await C.click('[data-act=watch]');
+    await A.waitForFunction(()=>document.querySelectorAll('#seats li:not(.empty)').length===2&&/Cy/.test(document.querySelector('#specs').textContent));
+    assert.equal(await A.isDisabled('#startBtn'),true,'start enabled before anyone is ready');
+    assert.equal(await B.isVisible('#startBtn'),false,'non-host sees start');
+    await A.click('#readyBtn');await B.click('#readyBtn');
+    await A.waitForFunction(()=>!document.querySelector('#startBtn').disabled);
+    await shot(A,'1-lobby');
+    for(const p of [A,B,C])await record(p);
+    await A.click('#startBtn');
+    for(const p of [A,B,C])await p.waitForSelector('#me:not([hidden])');
+    assert.match(await A.textContent('#me'),/You are team 1, Ann \(pink\)/);
+    assert.match(await B.textContent('#me'),/You are team 2, Bo \(yellow\)/);
+    assert.match(await C.textContent('#me'),/watching/);
+    assert.equal(await A.isVisible('#again'),false,'hot-seat New game shown online');
+    // let the worms drop, then whoever's turn it is walks and fires; the other sees "Waiting for"
+    const turnPage=async()=>{for(;;){for(const p of [A,B]){const mine=await p.evaluate(()=>__sq.game.phase==='aim'&&__sq.game.cur===__sq.ls.myTeam);if(mine)return p}await sleep(100)}};
+    for(let turn=0;turn<3;turn++){
+      const P=await turnPage(),O=P===A?B:A;
+      assert.match(await P.textContent('#who'),/Your turn/);
+      assert.match(await O.textContent('#who'),/Waiting for/);
+      assert.equal(await O.evaluate(()=>document.querySelector('#weapons').classList.contains('dim')),true);
+      if(turn===0)await shot(P,'2-my-turn');
+      // the other player's keys must do nothing
+      const before=await O.evaluate(()=>__sq.game.active().x);
+      await O.keyboard.down('ArrowLeft');await sleep(300);await O.keyboard.up('ArrowLeft');
+      await sleep(300);assert.equal(await O.evaluate(()=>__sq.game.active().x),before,'off-turn player moved a worm');
+      await P.keyboard.press(String(turn===2?6:1));
+      await P.keyboard.down(turn%2?'ArrowLeft':'ArrowRight');await sleep(400);await P.keyboard.up(turn%2?'ArrowLeft':'ArrowRight');
+      await P.keyboard.down('ArrowUp');await sleep(250);await P.keyboard.up('ArrowUp');
+      await P.keyboard.down(' ');await sleep(500);await P.keyboard.up(' ');
+      await P.waitForFunction(()=>__sq.game.phase!=='aim',null,{timeout:5000});
+      if(turn===0)await shot(C,'3-spectator');
+    }
+    await sleep(1500);await compare([A,B,C],'after 3 turns');
+    // B's simulation freezes (like a stuck tab): A gets the stall overlay, then it clears
+    await B.evaluate(()=>{window.__pump=__sq.ls.pump;__sq.ls.pump=()=>0});
+    await A.waitForFunction(()=>/Waiting for Bo/.test(document.querySelector('#banner').textContent),null,{timeout:5000});
+    await shot(A,'4-stall');
+    await B.evaluate(()=>{__sq.ls.pump=window.__pump});
+    await A.waitForFunction(()=>document.querySelector('#banner').hidden,null,{timeout:5000});
+    console.log('stall overlay shown and cleared');
+    // B reloads mid-match: rejoins with its saved token and fast-forwards
+    await B.reload();await B.waitForSelector('#me:not([hidden])');
+    assert.match(await B.textContent('#me'),/team 2, Bo/);
+    await B.waitForFunction(()=>__sq.ls.started&&__sq.ls.behind<10);await record(B);
+    await sleep(3000);await compare([A,B,C],'after reload');
+    // the spectator leaves: back to the home screen, gone from the room
+    await C.click('#leave');await C.waitForSelector('[data-act=create]');
+    assert.equal(new URL(C.url()).pathname,'/');
+    await sleep(300);
+    assert.equal(srv.rooms.get(code).spectators.length,0);
+    assert.deepEqual(errors,[]);
+    console.log('no page errors; screenshots in screens/');
+  }finally{await browser.close();await srv.close()}
+})().catch(e=>{console.error(e);process.exit(1)});

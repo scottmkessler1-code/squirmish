@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "check:browser": "NODE_PATH=$(npm root -g) node test/browser.check.js",
+    "check:online": "NODE_PATH=$(npm root -g) node test/online.check.js",
     "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "engines": {

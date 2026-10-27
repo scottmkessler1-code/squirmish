@@ -100,7 +100,7 @@ function addBot(c,seed){
       const key=g.cur+':'+g.teams[g.cur].turns;
       if(key!==turn){turn=key;let f=g.frame+5;plan=[];const at=(k,d,df)=>{f+=df;plan.push({f,k,d})};
         const t=g.teams[g.cur],avail=[1,2,3,4,5].filter(i=>t.ammo[i]>0);
-        if(avail.length){const k=String(avail[Math.floor(R()*avail.length)]);at(k,true,0);at(k,false,2)}
+        const k=avail.length?String(avail[Math.floor(R()*avail.length)]):'6';at(k,true,0);at(k,false,2);
         const dir=R()<.5?'ArrowLeft':'ArrowRight';at(dir,true,2);at(dir,false,Math.floor(R()*80));
         const up=R()<.6?'ArrowUp':'ArrowDown';at(up,true,2);at(up,false,Math.floor(R()*40));
         at(' ',true,2);at(' ',false,10+Math.floor(R()*70));

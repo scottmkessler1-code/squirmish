@@ -7,9 +7,9 @@ const {record}=require('./harness'),{createServer}=require('../server');
   const srv=createServer();await new Promise(r=>srv.server.listen(0,r));
   const b=await chromium.launch(),page=await b.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>m.type()==='error'&&errors.push(m.text()));
-  await page.goto('http://localhost:'+srv.server.address().port+'/r/ABCDE#debug');
+  await page.goto('http://localhost:'+srv.server.address().port+'/#debug');
   // the hot-seat UI still works: start a 3-player game, walk, fire a rocket
-  await page.click('.n[data-n="3"]');await page.click('#go');
+  await page.click('[data-act=offline]');await page.click('.n[data-n="3"]');await page.click('[data-act=offgo]');
   await page.waitForTimeout(2500);
   await page.keyboard.down('ArrowRight');await page.waitForTimeout(400);await page.keyboard.up('ArrowRight');
   await page.keyboard.down(' ');await page.waitForTimeout(500);await page.keyboard.up(' ');

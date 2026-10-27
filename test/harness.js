@@ -21,6 +21,7 @@ function record(seed,names,maxFrames=40000){
         if(R()>.08){ // 8% of turns the bot idles and lets the timer run out
           const avail=[1,2,3,4,5].filter(i=>t.ammo[i]>0);
           if(avail.length&&R()<.85){tap(f,p,String(avail[Math.floor(R()*avail.length)]));f+=3}
+          else if(!avail.length){tap(f,p,'6');f+=3} // out of ammo: punch
           if(R()<.7)f=hold(f,p,R()<.5?'ArrowLeft':'ArrowRight',Math.floor(R()*100));
           if(R()<.2){tap(f,p,'Enter');f+=70}
           if(R()<.8)f=hold(f,p,R()<.6?'ArrowUp':'ArrowDown',Math.floor(R()*45));

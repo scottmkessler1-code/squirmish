@@ -1,11 +1,13 @@
 # Caterpillar Continental Combat — online
 
 `npm install`, `npm start` (port from `PORT`, default 3000), open `http://localhost:3000`.
-`npm test` runs the determinism and server tests; `npm run check:browser` replays matches in Chromium.
+`npm test` runs the determinism, server and lockstep tests. With Playwright installed, `npm run check:browser` replays
+matches in Chromium and `npm run check:online` plays a match across three browser profiles (screenshots in `screens/`).
 
 ## Layout
 - `public/game.js` — the whole game as `createGame()`; simulation runs in Node too, drawing only with a canvas.
-- `public/squirmish.html` — the page (served at `/` and `/r/CODE`).
+- `public/squirmish.html` — markup and styles (served at `/` and `/r/CODE`).
+- `public/app.js` — the page: home, join and lobby screens, online match view, offline hot-seat, sound, weapon bar.
 - `server/rooms.js` — rooms, lobby, seats, host, start, return to lobby. No sockets, injected clock.
 - `server/index.js` — Express + `ws` on `/ws`, rate limits, heartbeats, room cleanup, the 50 ms clock tick.
 - `public/lockstep.js` — client side of the lockstep: applies server-stamped inputs, runs only up to `upTo`, acks, reports the end.
@@ -45,3 +47,10 @@ The server counts frames at 60/s and every 50 ms sends `step`. An input received
 `f = S + 6` (never at or below an `upTo` already sent), so clients may run up to `upTo = S + 5`.
 If a connected, caught-up player's `ack` falls more than 1.5 s behind, the clock pauses (`stall`) until they are within
 0.75 s; after 8 s of waiting it stops waiting for them. Spectators and players still catching up never pause it.
+
+## Client behaviour
+- Online, the simulation runs at 60 fps up to `upTo`; behind by more than 120 frames it fast-forwards on an 8 ms budget per
+  animation frame with sound muted. Hidden tabs keep simulating from a 250 ms timer.
+- Inputs are sent only while it is your team's turn; the weapon bar shows your own team's ammo and is dimmed otherwise.
+- The reconnect token is kept in `localStorage` per room, so a reload or a dropped connection rejoins the same seat.
+- Add `#debug` to the URL for the seed/frame/hash readout and `window.__sq` (game, lockstep, net).
