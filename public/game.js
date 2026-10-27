@@ -193,7 +193,8 @@ function loadSnapshot(s){
 function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k in keys)keys[k]=false;
   genTerrain();teams=[];worms=[];projs=[];parts=[];crates=[];cur=-1;winner=null;wind=(rng()<.5?-1:1)*(.15+rng()*.85);
   weapon=1;aim=.5;power=0;charging=false;
-  names.forEach((n,i)=>teams.push({name:n,color:COLORS[i],worms:[],turns:0,act:null,ammo:[99,5,2,2,2,1,0]}));
+  // starting ammo: punch (unlimited), rocket, cluster, shotgun, dynamite, airstrike, bomblet (cluster fragments only)
+  names.forEach((n,i)=>teams.push({name:n,color:COLORS[i],worms:[],turns:0,act:null,ammo:[99,15,2,5,2,1,0]}));
   const total=names.length*2,slots=shuffle([...Array(total).keys()]);
   teams.forEach((t,ti)=>{for(let k=0;k<2;k++){
     const s=slots.pop(),w={x:(s+.5)*W/total+(rng()-.5)*20,y:8,vx:0,vy:0,hp:100,team:t,dir:s<total/2?1:-1,air:true,dead:false};
