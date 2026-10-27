@@ -179,3 +179,22 @@ test('every worm starts the first turn on 100 health, and a turn lasts 15 s',()=
     assert.ok(g.frame-f>=900&&g.frame-f<900+200,'turn lasted '+(g.frame-f)+' frames');
   }
 });
+
+test('each team starts its turn with the weapon it used last, not the previous player’s',()=>{
+  const g=createGame();g.startGame(['A','B','C'],5);
+  const turn=key=>{while(g.phase!=='aim')g.update();const p=g.cur,f=g.frame;
+    if(key){g.submitInput({f:f+1,p,k:key,d:true});g.submitInput({f:f+2,p,k:key,d:false})}
+    g.submitInput({f:f+3,p,k:' ',d:true});g.submitInput({f:f+20,p,k:' ',d:false}); // fire (or punch)
+    while(g.cur===p||g.phase!=='aim')g.update();return p};
+  const first=turn('3'),second=turn('6');turn('2'); // shotgun, punch, cluster
+  while(g.cur!==first)turn(null);
+  assert.equal(g.weapon,3,'first team should be back on its shotgun');
+  turn(null);while(g.cur!==second)turn(null);
+  assert.equal(g.weapon,0,'second team should be back on punch');
+  // out of ammo: falls back to the first weapon that has some
+  const h=createGame();h.startGame(['A','B'],5);while(h.phase!=='aim')h.update();
+  const p=h.cur;h.submitInput({f:h.frame+1,p,k:'5',d:true});h.update();
+  h.teams[p].ammo[5]=0; // the airstrike is gone by the time their turn comes round again
+  while(h.cur===p)h.update();while(h.cur!==p||h.phase!=='aim')h.update();
+  assert.equal(h.weapon,1);
+});

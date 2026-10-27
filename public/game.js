@@ -86,7 +86,7 @@ function applyInput(ev){
   if(!ev.d){keys[k]=false;if(k===' '&&charging&&phase==='aim')fire();return}
   keys[k]=true;
   if(phase!=='aim'||!w)return;
-  if(k.length===1&&k>='1'&&k<='6'){if(!charging)weapon=ORDER[+k-1]}
+  if(k.length===1&&k>='1'&&k<='6'){if(!charging){weapon=ORDER[+k-1];teams[cur].weapon=weapon}} // each team remembers its own choice
   else if(k==='Enter'){if(!w.air&&!charging){w.air=true;w.vy=-2.8;w.vx=w.dir*1.6;w.y-=1;sfx('jump')}}
   else if(k===' '){if(!charging&&(weapon===0||w.team.ammo[weapon]>0)){if(weapon<1||weapon===3)fire();else{charging=true;power=0}}}
 }
@@ -95,7 +95,7 @@ function stateHash(){
   for(const w of worms){m(w.x);m(w.y);m(w.vx);m(w.vy);m(w.hp);m(w.dead?1:0);m(w.dir);m(w.air?1:0)}
   for(const p of projs){m(p.x);m(p.y);m(p.vx);m(p.vy);m(p.t);m(p.fuse)}
   for(const c of crates){m(c.x);m(c.y)}
-  teams.forEach(t=>{t.ammo.forEach(m);m(t.turns)});m(cur);m(timer);m(frame);
+  teams.forEach(t=>{t.ammo.forEach(m);m(t.turns);m(t.weapon)});m(cur);m(timer);m(frame);
   m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(retreat);m(wind);m(rs/1000);
   for(const k of GAMEKEYS)m(keys[k]?1:0);
   return h>>>0;
@@ -168,7 +168,7 @@ function decodeMask(r){let i=0,v=0;for(const n of r){mask.fill(v,i,i+n);i+=n;v^=
 function getSnapshot(){
   return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,
     winner:winner?teams.indexOf(winner):-1,keys:GAMEKEYS.filter(k=>keys[k]),
-    teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo]})),
+    teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo],weapon:t.weapon})),
     worms:worms.map(w=>({...pick(w,WORM_KEYS),team:teams.indexOf(w.team)})),
     projs:projs.map(p=>pick(p,PROJ_KEYS)),
     crates:crates.map(c=>({...pick(c,CRATE_KEYS),items:c.items.map(x=>[...x])})),
@@ -185,7 +185,7 @@ function loadSnapshot(s){
     for(let i=0;i<mask.length;i++)if(pristine[i]&&!mask[i])d[i*4+3]=0;
     tg.putImageData(img,0,0);
   }
-  teams=s.teams.map((t,i)=>({name:t.name,color:COLORS[i],worms:[],turns:t.turns,act:null,ammo:[...t.ammo]}));
+  teams=s.teams.map((t,i)=>({name:t.name,color:COLORS[i],worms:[],turns:t.turns,act:null,ammo:[...t.ammo],weapon:t.weapon??1}));
   worms=s.worms.map(o=>{const w={...unpick(o),team:teams[o.team]};w.team.worms.push(w);return w});
   s.teams.forEach((t,i)=>teams[i].act=t.act>=0?worms[t.act]:null);
   projs=s.projs.map(unpick);
@@ -200,7 +200,7 @@ function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k
   genTerrain();teams=[];worms=[];projs=[];parts=[];crates=[];cur=-1;winner=null;wind=(rng()<.5?-1:1)*(.15+rng()*.85);
   weapon=1;aim=.5;power=0;charging=false;
   // starting ammo: punch (unlimited), rocket, cluster, shotgun, dynamite, airstrike, bomblet (cluster fragments only)
-  names.forEach((n,i)=>teams.push({name:n,color:COLORS[i],worms:[],turns:0,act:null,ammo:[99,15,2,5,2,1,0]}));
+  names.forEach((n,i)=>teams.push({name:n,color:COLORS[i],worms:[],turns:0,act:null,ammo:[99,15,2,5,2,1,0],weapon:1}));
   const total=names.length*2,slots=shuffle([...Array(total).keys()]);
   teams.forEach((t,ti)=>{for(let k=0;k<2;k++){
     const s=slots.pop(),w={x:(s+.5)*W/total+(rng()-.5)*20,y:8,vx:0,vy:0,hp:100,team:t,dir:s<total/2?1:-1,air:true,dead:false};
@@ -214,6 +214,8 @@ function nextTurn(){
   if(alive.length<2){phase='over';winner=alive[0]||null;sfx('win');return}
   do{cur=(cur+1)%teams.length}while(!teams[cur].worms.some(w=>!w.dead));
   const t=teams[cur],al=t.worms.filter(w=>!w.dead);t.act=al[t.turns++%al.length];
+  // start with this team's last weapon; if it's out of ammo, the first one that has some (punch never runs out)
+  weapon=[t.weapon,1,2,3,4,5].find(i=>t.ammo[i]>0)??0;
   if(crates.length<4&&rng()<.6)dropCrate();timer=TURN_TIME;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;
 }
 const active=()=>teams[cur]&&teams[cur].act;

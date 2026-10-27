@@ -314,7 +314,7 @@ function renderWeapons(){
   const online=mode==='match',my=online?ls.myTeam:-1,act=game.active(),curTeam=act?act.team:null;
   // online, the bar always shows your own team's ammo; spectators see whoever is playing
   const team=my>=0?game.teams[my]:curTeam,mine=!online||(my>=0&&game.cur===my);
-  const am=team?team.ammo:[],sel=mine&&game.phase!=='over'?game.weapon:-1;
+  const am=team?team.ammo:[],sel=game.phase==='over'?-1:mine?game.weapon:team?team.weapon:-1; // off-turn: the weapon your team starts with
   let label='';
   if(!online)label=team?team.name+'’s arsenal':'';
   else if(game.phase==='over')label=game.winner?game.winner.name+' won':'Draw';
