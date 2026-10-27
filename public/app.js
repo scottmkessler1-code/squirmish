@@ -182,6 +182,7 @@ function enterMatch(){
 // ---------- network ----------
 const net={ws:null,code:null,token:null,you:null,lobby:null,status:'off',ping:null,retry:0,closing:false,fatal:false,spectate:false,timer:0,pingT:0,over:null};
 const tokenKey=c=>'squirmish:token:'+c;
+const RESTART_MSG='The game server restarted (usually for an update), so this match had to end. Create a new room to play again.';
 function send(m){if(net.ws&&net.ws.readyState===1)net.ws.send(JSON.stringify(m))}
 function openRoom(code,{spectate=false}={}){
   closeRoom();
@@ -231,8 +232,11 @@ function onServer(m){
     case 'host':if(mode==='room'&&m.id===net.you?.id)flash('You’re the host now.');break;
     case 'pong':net.ping=Math.round(performance.now()-m.c);break;
     case 'replaced':net.fatal=true;showHome('This room is open in another tab, so this one was closed.');break;
+    case 'server_restart':net.fatal=true;store.set(tokenKey(net.code),null);history.replaceState(null,'','/');closeRoom();
+      showHome(RESTART_MSG);break;
     case 'error':
-      if(m.code==='no_room'){net.fatal=true;store.set(tokenKey(net.code),null);history.replaceState(null,'','/');showHome('That room doesn’t exist any more.')}
+      // a room we were in that has vanished means the server restarted (rooms only live in its memory)
+      if(m.code==='no_room'){const wasIn=!!(net.you||net.token);net.fatal=true;store.set(tokenKey(net.code),null);history.replaceState(null,'','/');showHome(wasIn?RESTART_MSG:'That room doesn’t exist any more. Rooms close 30 minutes after everyone leaves, or when the game server restarts.')}
       else if(m.code==='room_full'){net.fatal=true;showHome('That room is full.')}
       else if(mode==='room')flash({not_ready:'Everyone needs to be ready first.',need_players:'You need at least 2 players.',not_host:'Only the host can start.',room_full:'All seats are taken.'}[m.code]||'Something went wrong ('+m.code+').');
       break;

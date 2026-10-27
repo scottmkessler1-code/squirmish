@@ -318,8 +318,9 @@ class Rooms{
     const r=new Room(code,this.now(),this.opts);this.rooms.set(code,r);return r;
   }
   get(code){return typeof code==='string'?this.rooms.get(code.toUpperCase()):undefined}
-  tickClocks(){const now=this.now();for(const r of this.rooms.values())r.tickClock(now)}
-  sweep(){const now=this.now();for(const [c,r] of this.rooms)if(!r.tick(now))this.rooms.delete(c)}
+  // each room is ticked on its own: a bug in one room is logged and must not stop the others (or crash the process)
+  tickClocks(){const now=this.now();for(const r of this.rooms.values())try{r.tickClock(now)}catch(e){console.error('tick failed',r.code,e)}}
+  sweep(){const now=this.now();for(const [c,r] of this.rooms)try{if(!r.tick(now))this.rooms.delete(c)}catch(e){console.error('sweep failed',c,e)}}
 }
 
 module.exports={Rooms,Room,cleanName,isCode,CODE_ALPHABET,MAX_PLAYERS,MAX_SPECTATORS,LOBBY_GRACE_MS,ROOM_IDLE_MS,BACK_TO_LOBBY_MS,FORFEIT_MS,

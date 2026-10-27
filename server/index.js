@@ -45,7 +45,7 @@ function createServer({now=Date.now,maxRooms,fps,forfeitMs,createPerMin=CREATE_P
     const send=msg=>{if(ws.readyState===ws.OPEN)ws.send(JSON.stringify(msg));if(msg.t==='replaced')ws.close(4001,'replaced')};
     const fail=(code,close)=>{send({t:'error',code});if(close)ws.close(4000,code)};
 
-    ws.on('message',(data,isBinary)=>{
+    const onMessage=(data,isBinary)=>{
       const t=now();tokens=Math.min(BURST,tokens+(t-lastRefill)*RATE/1000);lastRefill=t;
       if(tokens<1){if(++dropped>MAX_DROPPED)ws.close(1008,'rate_limited');return}
       tokens--;
@@ -81,20 +81,28 @@ function createServer({now=Date.now,maxRooms,fps,forfeitMs,createPerMin=CREATE_P
         default:err='unknown_type';
       }
       if(err)fail(err);
-    });
+    };
+    // a bug while handling one message must never take the whole server (and every room) down with it
+    ws.on('message',(data,isBinary)=>{try{onMessage(data,isBinary)}catch(e){console.error('message failed',room&&room.code,e);fail('server_error')}});
     // a socket replaced by a newer tab must not mark the member as disconnected
-    ws.on('close',()=>{if(me&&me.send===send)room.disconnect(me,now())});
+    ws.on('close',()=>{try{if(me&&me.send===send)room.disconnect(me,now())}catch(e){console.error('disconnect failed',room&&room.code,e)}});
   });
 
   const beat=setInterval(()=>{for(const ws of wss.clients){if(!ws.isAlive){ws.terminate();continue}ws.isAlive=false;ws.ping()}},HEARTBEAT_MS);
   const sweep=setInterval(()=>{rooms.sweep();const t=now();for(const [ip,ts] of created)if(!ts.some(x=>t-x<60_000))created.delete(ip)},SWEEP_MS);
   const step=setInterval(()=>rooms.tickClocks(),STEP_MS);
+  // shutting down (a redeploy or restart): tell everyone first, so the page can say why the match ended
+  const shutdown=()=>{for(const ws of wss.clients)try{ws.send(JSON.stringify({t:'server_restart'}));ws.close(1012,'server restart')}catch{}};
   const close=()=>new Promise(res=>{clearInterval(beat);clearInterval(sweep);clearInterval(step);for(const ws of wss.clients)ws.terminate();wss.close();server.close(()=>res())});
-  return {app,server,wss,rooms,close};
+  return {app,server,wss,rooms,close,shutdown};
 }
 
 if(require.main===module){
   const port=+process.env.PORT||3000;
-  createServer().server.listen(port,()=>console.log('Caterpillar Continental Combat on http://localhost:'+port));
+  const srv=createServer();
+  srv.server.listen(port,()=>console.log('Caterpillar Continental Combat on http://localhost:'+port));
+  let stopping=false;
+  const stop=sig=>{if(stopping)return;stopping=true;console.log(sig+': telling players, then shutting down');srv.shutdown();setTimeout(()=>process.exit(0),1500).unref()};
+  process.on('SIGTERM',()=>stop('SIGTERM'));process.on('SIGINT',()=>stop('SIGINT'));
 }
 module.exports={createServer};

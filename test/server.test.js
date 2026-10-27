@@ -183,3 +183,10 @@ test('match settings: host only, lobby only, validated, reset ready, sent with s
   const c=client(),wc=await c.join(code,'C');assert.deepEqual(wc.match.settings,{worms:4,turn:30});
   for(const x of [a,b,c])x.close();
 });
+
+test('shutdown tells every connected player the server is restarting before closing',async()=>{
+  clock+=61_000;
+  const code=await newRoom(),a=client(),b=client();await a.join(code,'A');await b.join(code,'B');
+  srv.shutdown();
+  for(const x of [a,b]){await x.next('server_restart');assert.equal((await x.closed).code,1012)}
+});

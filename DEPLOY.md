@@ -4,6 +4,14 @@ The server is one Node process holding all rooms in memory. Run **exactly one in
 to sleep while people play (sleeping or restarting ends every open room). HTTPS on the host gives `wss://` automatically:
 the page connects to the WebSocket on its own origin.
 
+## Restarts end matches
+Rooms live in the server's memory, so **any restart ends every match in progress**: a redeploy (by default Render
+redeploys on every push to GitHub), the free plan going to sleep, or a crash. Players are told "The game server restarted"
+and can create a new room straight away. To avoid surprises:
+- Render → the service → Settings → **Auto-Deploy: No**, then press **Manual Deploy** when nobody is playing.
+- Use a paid instance type (the free plan sleeps after ~15 minutes without traffic).
+- The server logs (`message failed`, `tick failed`) show any bug it caught and survived; please send those to us.
+
 ## Render (simplest)
 1. Push this repo to GitHub.
 2. Render dashboard → **New → Blueprint** → pick the repo. `render.yaml` creates one web service
