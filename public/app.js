@@ -58,6 +58,7 @@ function sfx(n,a){
     case 'plant':tone(300,200,.06,'square',.2);tone(220,160,.08,'square',.2,.07);break;
     case 'whistle':tone(1800,500,.9,'sine',.12);break;
     case 'jump':tone(300,600,.15,'sine',.25);break;
+    case 'flip':tone(420,1100,.28,'triangle',.22);tone(700,1400,.18,'sine',.12,.08);break;
     case 'step':tone(120+Math.random()*30,80,.05,'triangle',.12);break;
     case 'hurt':tone(900,500,.12,'square',.12);tone(700,350,.12,'square',.12,.1);break;
     case 'die':tone(500,80,.5,'sawtooth',.18);break;

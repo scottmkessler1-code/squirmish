@@ -59,7 +59,9 @@ function carve(cx,cy,r){
 }
 function terrainHash(){if(tdirty){let h=0;for(let i=0;i<mask.length;i++)h=(Math.imul(h,31)+mask[i])|0;thash=h;tdirty=false}return thash}
 
-let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapon=1,power=0,charging=false,aim=.5,winner=null,settle=0,waitT=0,retreat=0,tick=0;
+let teams=[],worms=[],projs=[],parts=[],cur=-1,phase='menu',timer=0,wind=0,weapon=1,power=0,charging=false,aim=.5,winner=null,settle=0,waitT=0,retreat=0,jumpF=-1,tick=0;
+// jumping: Enter hops forward; Enter again within BACKFLIP_WINDOW frames, while still rising, turns it into a backflip
+const JUMP_VX=1.96,JUMP_VY=-3.43,FLIP_VX=1.1,FLIP_VY=-5.2,BACKFLIP_WINDOW=18;
 const RETREAT=180; // frames the worm may keep walking after firing (3 s)
 const TURN_TIME=900; // frames per turn (15 s)
 const keys={};
@@ -85,10 +87,21 @@ function applyInput(ev){
   const k=ev.k,w=active();
   if(!ev.d){keys[k]=false;if(k===' '&&charging&&phase==='aim')fire();return}
   keys[k]=true;
+  // Enter jumps on your turn and during the retreat after firing
+  if(k==='Enter'){if(w&&!w.dead&&(phase==='aim'||(phase==='wait'&&retreat>0)))jump(w);return}
   if(phase!=='aim'||!w)return;
   if(k.length===1&&k>='1'&&k<='6'){if(!charging){weapon=ORDER[+k-1];teams[cur].weapon=weapon}} // each team remembers its own choice
-  else if(k==='Enter'){if(!w.air&&!charging){w.air=true;w.vy=-2.8;w.vx=w.dir*1.6;w.y-=1;sfx('jump')}}
   else if(k===' '){if(!charging&&(weapon===0||w.team.ammo[weapon]>0)){if(weapon<1||weapon===3)fire();else{charging=true;power=0}}}
+}
+function jump(w){
+  if(charging)return;
+  if(!w.air){ // forward hop
+    w.air=true;w.vy=JUMP_VY;w.vx=w.dir*JUMP_VX;w.y-=1;jumpF=frame;
+    sfx('jump');burst(w.x,w.y,10,['#c9b79c','#a58f72','#efe6d6'],1.6);
+  }else if(jumpF>=0&&frame-jumpF<=BACKFLIP_WINDOW&&w.vy<0){ // second press while still rising: backflip
+    w.vy=FLIP_VY;w.vx=-w.dir*FLIP_VX;jumpF=-1;w.ft=tick; // ft: when the flip started, for drawing the spin
+    sfx('flip');burst(w.x,w.y,8,['#efe6d6','#fff'],1.2);
+  }
 }
 function stateHash(){
   let h=terrainHash()|0;const m=v=>{h=(Math.imul(h,31)+Math.round(v*1000))|0};
@@ -96,7 +109,7 @@ function stateHash(){
   for(const p of projs){m(p.x);m(p.y);m(p.vx);m(p.vy);m(p.t);m(p.fuse)}
   for(const c of crates){m(c.x);m(c.y)}
   teams.forEach(t=>{t.ammo.forEach(m);m(t.turns);m(t.weapon)});m(cur);m(timer);m(frame);
-  m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(retreat);m(wind);m(rs/1000);
+  m(PHASES.indexOf(phase));m(weapon);m(aim);m(power);m(charging?1:0);m(settle);m(waitT);m(retreat);m(jumpF);m(wind);m(rs/1000);
   for(const k of GAMEKEYS)m(keys[k]?1:0);
   return h>>>0;
 }
@@ -166,7 +179,7 @@ const WORM_KEYS=['x','y','vx','vy','hp','dir','air','dead'],PROJ_KEYS=['x','y','
 function encodeMask(){const r=[];let v=0,n=0;for(let i=0;i<mask.length;i++){if(mask[i]!==v){r.push(n);v=mask[i];n=0}n++}r.push(n);return r}
 function decodeMask(r){let i=0,v=0;for(const n of r){mask.fill(v,i,i+n);i+=n;v^=1}if(i!==mask.length)throw new Error('bad terrain size');tdirty=true}
 function getSnapshot(){
-  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,
+  return {v:1,seed:curSeed,frame,tick,rs,cur,phase,timer,wind:nz(wind),weapon,power:nz(power),charging,aim:nz(aim),settle,waitT,retreat,jumpF,
     winner:winner?teams.indexOf(winner):-1,keys:GAMEKEYS.filter(k=>keys[k]),
     teams:teams.map(t=>({name:t.name,turns:t.turns,act:t.act?worms.indexOf(t.act):-1,ammo:[...t.ammo],weapon:t.weapon})),
     worms:worms.map(w=>({...pick(w,WORM_KEYS),team:teams.indexOf(w.team)})),
@@ -191,7 +204,7 @@ function loadSnapshot(s){
   projs=s.projs.map(unpick);
   crates=s.crates.map(o=>({...unpick(o),items:o.items.map(x=>[...x])}));
   frame=s.frame;tick=s.tick;rs=s.rs;cur=s.cur;phase=s.phase;timer=s.timer;wind=un(s.wind);weapon=s.weapon;power=un(s.power);
-  charging=s.charging;aim=un(s.aim);settle=s.settle;waitT=s.waitT;retreat=s.retreat||0;winner=s.winner>=0?teams[s.winner]:null;
+  charging=s.charging;aim=un(s.aim);settle=s.settle;waitT=s.waitT;retreat=s.retreat||0;jumpF=s.jumpF??-1;winner=s.winner>=0?teams[s.winner]:null;
   for(const k in keys)keys[k]=false;for(const k of s.keys)keys[k]=true;
   inputQ.length=0;parts=[];rings=[];shake=0;toastT=0;
 }
@@ -207,7 +220,7 @@ function startGame(names,seed){setSeed(seed);frame=0;inputQ.length=0;for(const k
     t.worms.push(w);worms.push(w);}});
   // a random team starts: nextTurn() after the drop-in moves on to the team after cur
   cur=(Math.floor(rng()*teams.length)+teams.length-1)%teams.length;
-  dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0; // let worms drop in first
+  dropCrate();dropCrate();phase='wait';settle=-60;waitT=0;retreat=0;jumpF=-1; // let worms drop in first
 }
 function nextTurn(){
   const alive=teams.filter(t=>t.worms.some(w=>!w.dead));
@@ -216,7 +229,7 @@ function nextTurn(){
   const t=teams[cur],al=t.worms.filter(w=>!w.dead);t.act=al[t.turns++%al.length];
   // start with this team's last weapon; if it's out of ammo, the first one that has some (punch never runs out)
   weapon=[t.weapon,1,2,3,4,5].find(i=>t.ammo[i]>0)??0;
-  if(crates.length<4&&rng()<.6)dropCrate();timer=TURN_TIME;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;
+  if(crates.length<4&&rng()<.6)dropCrate();timer=TURN_TIME;sfx('turn');phase='aim';for(const k in keys)keys[k]=false;aim=.5;charging=false;power=0;settle=0;waitT=0;retreat=0;jumpF=-1;
 }
 const active=()=>teams[cur]&&teams[cur].act;
 
@@ -347,6 +360,7 @@ function drawWorm(w,idx){
   const wig=tick-(w.wt||-99)<8,N=6,seg=[],col=w.team.color,me=w===active();
   const hit=dmgSeen.get(w),hurt=hit&&tick-hit.t<45,low=w.hp<40,falling=w.air&&w.vy>3;
   g.save();g.translate(w.x,w.y);g.scale(WS*w.dir,WS); // local coordinates: feet at 0,0, facing right
+  const fa=tick-(w.ft??-1e9);if(fa<40){g.translate(0,-10);g.rotate(-Math.PI*2*fa/40);g.translate(0,10)} // backflip spin
   for(let i=0;i<=N;i++){const u=i/N,k=wig?Math.sin(tick/2+i*1.2)*1.4:0;seg.push({x:-10*(1-u)*(1-u*.15),y:-3.6-u*u*8+k,r:i===N?6.3:4.2+u*.8})}
   // ground shadow and little feet
   g.fillStyle='rgba(0,0,0,.18)';g.beginPath();g.ellipse(-4,.6,9.5,1.6,0,0,7);g.fill();

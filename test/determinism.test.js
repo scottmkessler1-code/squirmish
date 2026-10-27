@@ -198,3 +198,46 @@ test('each team starts its turn with the weapon it used last, not the previous p
   while(h.cur===p)h.update();while(h.cur!==p||h.phase!=='aim')h.update();
   assert.equal(h.weapon,1);
 });
+
+// ---- jumping
+function onFlat(){ // a game at its first turn, with the active worm standing still
+  const g=createGame();g.startGame(['A','B'],5);while(g.phase!=='aim')g.update();return g;
+}
+function flight(g,presses){ // presses: frames (after now) at which Enter goes down; returns the worm's path until it lands
+  const w=g.active(),p=g.cur,f=g.frame,x0=w.x,y0=w.y;
+  for(const d of presses){g.submitInput({f:f+d,p,k:'Enter',d:true});g.submitInput({f:f+d+1,p,k:'Enter',d:false})}
+  let top=0,started=false;
+  for(let i=0;i<400;i++){g.update();if(w.air)started=true;top=Math.max(top,y0-w.y);if(started&&!w.air)break}
+  return {dx:(w.x-x0)*w.dir,top,landed:!w.air};
+}
+test('jump: Enter hops forward, higher and further than the old hop',()=>{
+  const j=flight(onFlat(),[1]);
+  assert.ok(j.landed);assert.ok(j.top>=40,'peak only '+j.top.toFixed(1)+' px');assert.ok(j.dx>20,'moved only '+j.dx.toFixed(1)+' px forward');
+});
+test('jump: a quick second press turns it into a higher backflip; a slow one does nothing',()=>{
+  const flip=flight(onFlat(),[1,8]),hop=flight(onFlat(),[1]),late=flight(onFlat(),[1,40]);
+  assert.ok(flip.dx<-5,'backflip should go backwards, went '+flip.dx.toFixed(1));
+  assert.ok(flip.top>hop.top*1.8,`backflip peak ${flip.top.toFixed(1)} vs hop ${hop.top.toFixed(1)}`);
+  assert.deepEqual(late,hop,'a press after the window changed the jump');
+});
+test('jump: allowed during the retreat after firing, not after it, and never on another team’s turn',()=>{
+  const g=onFlat(),w=g.active(),p=g.cur,f=g.frame;
+  g.submitInput({f:f+1,p:1-p,k:'Enter',d:true});g.update();g.update();
+  assert.equal(w.air,false,'other team made the worm jump');
+  for(const [df,k,d] of [[1,'3',true],[2,'3',false],[3,' ',true],[4,' ',false],[60,'Enter',true],[61,'Enter',false]])g.submitInput({f:f+df,p,k,d});
+  let jumped=false;while(g.frame<f+70){g.update();if(w.air)jumped=true}
+  assert.ok(jumped,'no jump during the retreat');
+  while(w.air)g.update();
+  const g2=onFlat(),w2=g2.active(),f2=g2.frame;
+  for(const [df,k,d] of [[1,'3',true],[2,'3',false],[3,' ',true],[4,' ',false],[200,'Enter',true],[201,'Enter',false]])g2.submitInput({f:f2+df,p:g2.cur,k,d});
+  let late=false;while(g2.frame<f2+215){g2.update();if(w2.air&&g2.frame>f2+199)late=true}
+  assert.ok(!late,'jumped after the retreat ended');
+});
+test('jump: a snapshot taken mid-jump continues identically',()=>{
+  const a=onFlat(),p=a.cur,f=a.frame;
+  for(const d of [1,8]){a.submitInput({f:f+d,p,k:'Enter',d:true});a.submitInput({f:f+d+1,p,k:'Enter',d:false})}
+  while(a.frame<f+5)a.update(); // between the two presses
+  const b=createGame();b.loadSnapshot(JSON.parse(JSON.stringify(a.getSnapshot())));
+  for(const d of [8]){b.submitInput({f:f+d,p,k:'Enter',d:true});b.submitInput({f:f+d+1,p,k:'Enter',d:false})}
+  for(let i=0;i<200;i++){a.update();b.update();assert.equal(b.stateHash(),a.stateHash(),'frame '+a.frame)}
+});
