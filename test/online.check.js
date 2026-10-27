@@ -54,7 +54,8 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     await A.waitForFunction(()=>__sq.game.phase==='aim');
     const cam0=await A.evaluate(()=>__sq.game.camX),box=await A.$eval('#c',c=>{const r=c.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width}});
     const startX=cam0>100?box.x+150:box.x+box.w-150;
-    await A.mouse.move(startX,box.y+300);await A.mouse.down();await A.mouse.move(startX+(cam0>100?200:-200),box.y+300,{steps:5});await A.mouse.up();
+    await A.mouse.move(startX,box.y+300);await A.mouse.down({button:'right'});await A.mouse.move(startX+(cam0>100?200:-200),box.y+300,{steps:5});await A.mouse.up({button:'right'});
+    assert.equal(await A.evaluate(()=>__sq.game.getSnapshot().charging),false,'right-drag started a charge');
     const cam1=await A.evaluate(()=>__sq.game.camX);assert.ok(Math.abs(cam1-cam0)>150,`drag moved the view ${cam0} -> ${cam1}`);
     const s=box.w/960;await A.mouse.click(box.x+(cam1>100?331:629)*s,box.y+22*s);
     await A.waitForFunction(c=>Math.abs(__sq.game.camX-c)>200,cam1);
@@ -71,11 +72,20 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
       // the other player's keys must do nothing
       const before=await O.evaluate(()=>__sq.game.active().x);
       await O.keyboard.down('ArrowLeft');await sleep(300);await O.keyboard.up('ArrowLeft');
+      { // a left click off your turn does nothing either
+        const ob=await O.$eval('#c',c=>{const r=c.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height*.7]});
+        await O.mouse.move(...ob);await O.mouse.down();await sleep(200);await O.mouse.up();
+      }
       await sleep(300);assert.equal(await O.evaluate(()=>__sq.game.active().x),before,'off-turn player moved a worm');
       await P.keyboard.press(String(turn===2?6:1));
       await P.keyboard.down(turn%2?'ArrowLeft':'ArrowRight');await sleep(400);await P.keyboard.up(turn%2?'ArrowLeft':'ArrowRight');
       await P.keyboard.down('ArrowUp');await sleep(250);await P.keyboard.up('ArrowUp');
-      await P.keyboard.down(' ');await sleep(500);await P.keyboard.up(' ');
+      if(turn===1){ // fire with the left mouse button instead of Space: hold to charge, release to fire
+        const pb=await P.$eval('#c',c=>{const r=c.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height*.7]});
+        await P.mouse.move(...pb);await P.mouse.down();await sleep(200);
+        assert.equal(await P.evaluate(()=>__sq.game.getSnapshot().charging||__sq.game.phase!=='aim'),true,'mouse down did not charge');
+        await sleep(300);await P.mouse.up();
+      }else{await P.keyboard.down(' ');await sleep(500);await P.keyboard.up(' ');}
       await P.waitForFunction(()=>__sq.game.phase!=='aim',null,{timeout:5000});
       if(turn===0)await shot(C,'3-spectator');
     }

@@ -85,4 +85,4 @@ See [DEPLOY.md](DEPLOY.md): Render blueprint (`render.yaml`), `fly.toml`, and a 
 ## Map size
 The map is 960 px wide for up to 6 worms in total, then 160 px wider per extra worm, up to 3840 px (`worldWidth()` in
 `public/game.js`); height stays 540. Caves, crates and decoration scale with the width. On wide maps the camera follows the
-newest projectile, else the worm whose turn it is, else anything flying; players can drag the view or click the minimap.
+newest projectile, else the worm whose turn it is, else anything flying; players can drag the view with the right mouse button (or a finger) or click the minimap. Left click = Space.

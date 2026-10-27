@@ -328,13 +328,18 @@ addEventListener('keydown',e=>{if(e.key==='Escape'&&!sp.hidden){sp.hidden=true;s
 renderSound();
 addEventListener('pointerdown',initAudio);
 
-// ---------- looking around wide maps: drag the game view, or click the minimap ----------
+// ---------- mouse: left button = Space (hold to charge, release to fire); minimap click jumps the view;
+// right-button drag (or a finger drag on touch screens) looks around wide maps ----------
 const toView=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)*960/r.width,(e.clientY-r.top)*540/r.height]};
-let drag=null;
+const playing=()=>(mode==='offline'&&game.phase!=='menu')||mode==='match';
+let drag=null,mouseFire=false;
 cv.addEventListener('pointerdown',e=>{
-  if(game.worldWidth<=960)return;
-  const [vx,vy]=toView(e),mx=game.minimapAt(vx,vy);
-  if(mx!==null){game.centerOn(mx);drag={mini:true};}else drag={x:vx};
+  initAudio();
+  const [vx,vy]=toView(e),wide=game.worldWidth>960,mx=game.minimapAt(vx,vy);
+  if(e.button===0&&mx!==null){game.centerOn(mx);drag={mini:true}}
+  else if(e.pointerType==='mouse'&&e.button===0){if(!playing())return;e.preventDefault();mouseFire=true;press(' ',true)}
+  else if(wide&&(e.button===2||e.button===1||e.pointerType!=='mouse'))drag={x:vx};
+  else return;
   cv.setPointerCapture(e.pointerId);
 });
 cv.addEventListener('pointermove',e=>{
@@ -342,8 +347,10 @@ cv.addEventListener('pointermove',e=>{
   if(drag.mini){const mx=game.minimapAt(vx,Math.max(8,Math.min(38,vy)));if(mx!==null)game.centerOn(mx)}
   else{game.pan(drag.x-vx);drag.x=vx}
 });
-for(const ev of ['pointerup','pointercancel'])cv.addEventListener(ev,()=>{drag=null});
-function updateCursor(){const wide=game.worldWidth>960;cv.style.cursor=wide?(drag?'grabbing':'grab'):'';cv.style.touchAction=wide?'pan-y':''}
+const mouseUp=()=>{drag=null;if(mouseFire){mouseFire=false;press(' ',false)}};
+for(const ev of ['pointerup','pointercancel','lostpointercapture'])cv.addEventListener(ev,mouseUp);
+cv.addEventListener('contextmenu',e=>e.preventDefault()); // right button is for looking around
+function updateCursor(){const wide=game.worldWidth>960;cv.style.cursor=drag&&!drag.mini?'grabbing':playing()?'crosshair':'';cv.style.touchAction=wide?'pan-y':''}
 
 // ---------- keyboard ----------
 const held=new Set();
@@ -359,7 +366,7 @@ addEventListener('keydown',e=>{
   held.add(e.key);press(e.key,true);
 });
 addEventListener('keyup',e=>{if(GAMEKEYS.includes(e.key)){held.delete(e.key);press(e.key,false)}});
-addEventListener('blur',()=>{for(const k of held)press(k,false);held.clear()});
+addEventListener('blur',()=>{for(const k of held)press(k,false);held.clear();mouseUp()});
 
 // ---------- weapon bar ----------
 const NAMES=Squirmish.WEAPONS.map(w=>w.n);
